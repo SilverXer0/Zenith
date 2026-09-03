@@ -29,11 +29,16 @@ async function runSql(sql, json = false) {
 
 async function initializeDatabase() {
   await runSql(`PRAGMA busy_timeout = 5000;
-CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT 'Inbox', priority TEXT NOT NULL DEFAULT 'medium', due_date TEXT, completed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tasks_user_updated ON tasks(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);`);
+  const userColumns = await runSql("PRAGMA table_info(users)", true);
+  if (!userColumns.some((column) => column.name === "password_hash")) {
+    await runSql("ALTER TABLE users ADD COLUMN password_hash TEXT");
+    await runSql("DELETE FROM sessions");
+  }
   const users = await runSql("SELECT id FROM users ORDER BY created_at LIMIT 1", true);
   let userId = users[0]?.id;
   if (!userId) {
@@ -68,11 +73,23 @@ function taskInput(input, existing = {}) {
   return { ...existing, title, notes: (input.notes ?? existing.notes ?? "").trim(), project: (input.project ?? existing.project ?? "Inbox").trim() || "Inbox", priority: ["low", "medium", "high"].includes(input.priority) ? input.priority : (existing.priority || "medium"), dueDate: input.dueDate === undefined ? (existing.dueDate || null) : (input.dueDate || null), completed: input.completed === undefined ? Boolean(existing.completed) : Boolean(input.completed), updatedAt: new Date().toISOString() };
 }
 function tokenHash(token) { return scryptSync(token, "zenith-session", 32).toString("hex"); }
+function passwordHash(password) { const salt = randomBytes(16).toString("hex"); return `${salt}:${scryptSync(password, salt, 64).toString("hex")}`; }
+function passwordMatches(password, encoded) {
+  try { const [salt, expectedHex] = String(encoded).split(":"); const expected = Buffer.from(expectedHex, "hex"); const actual = scryptSync(password, salt, expected.length); return expected.length > 0 && timingSafeEqual(actual, expected); } catch { return false; }
+}
+function credentials(input) {
+  const displayName = String(input.displayName || "").trim().slice(0, 80);
+  const password = String(input.password || "");
+  if (!displayName) throw new Error("A display name is required.");
+  if (password.length < 8) throw new Error("Use a passphrase with at least 8 characters.");
+  return { displayName, password };
+}
 function cookieToken(request) { return request.headers.cookie?.match(/(?:^|;\s*)zenith_session=([^;]+)/)?.[1]; }
 async function createSession(userId) {
   const token = randomBytes(32).toString("base64url"); const now = new Date(); const expires = new Date(now.getTime() + 30 * 86400000).toISOString();
-  await runSql(`INSERT INTO sessions VALUES (${sqlQuote(tokenHash(token))}, ${sqlQuote(userId)}, ${sqlQuote(now.toISOString())}, ${sqlQuote(expires)})`); return { token, expires };
+  await runSql(`DELETE FROM sessions WHERE expires_at <= datetime('now'); INSERT INTO sessions VALUES (${sqlQuote(tokenHash(token))}, ${sqlQuote(userId)}, ${sqlQuote(now.toISOString())}, ${sqlQuote(expires)})`); return { token, expires };
 }
+function sessionCookie(session) { return `zenith_session=${session.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`; }
 async function currentUser(request) {
   const token = cookieToken(request); if (!token) return null;
   const rows = await runSql(`SELECT u.id, u.display_name AS displayName FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=${sqlQuote(tokenHash(token))} AND s.expires_at > datetime('now')`, true); return rows[0] || null;
@@ -85,13 +102,26 @@ async function api(request, response, url) {
   const path = url.pathname;
   if (request.method === "GET" && path === "/api/health") return send(response, 200, { ok: true, service: "zenith", storage: "sqlite" });
   if (request.method === "GET" && path === "/api/assistant/status") return send(response, 200, await ollamaStatus());
-  if (request.method === "POST" && path === "/api/auth/session") {
-    const input = await body(request); const name = String(input.displayName || "Local user").trim().slice(0, 80) || "Local user";
-    // The anonymous local bootstrap may reuse the first user; named sessions are always new users.
-    const rows = name === "Local user" ? await runSql("SELECT id FROM users ORDER BY created_at LIMIT 1", true) : [];
+  if (request.method === "GET" && path === "/api/auth/status") {
+    const rows = await runSql("SELECT password_hash AS passwordHash FROM users ORDER BY created_at LIMIT 1", true);
+    return send(response, 200, { setupRequired: !rows[0]?.passwordHash });
+  }
+  if (request.method === "POST" && path === "/api/auth/setup") {
+    const { displayName, password } = credentials(await body(request));
+    const rows = await runSql("SELECT id, password_hash AS passwordHash FROM users ORDER BY created_at LIMIT 1", true);
+    if (rows[0]?.passwordHash) return send(response, 409, { error: "Zenith is already set up. Please log in." });
     const userId = rows[0]?.id || randomUUID();
-    if (!rows.length) await runSql(`INSERT INTO users VALUES (${sqlQuote(userId)}, ${sqlQuote(name)}, ${sqlQuote(new Date().toISOString())})`);
-    const session = await createSession(userId); return send(response, 201, { user: { id: userId, displayName: name }, expires: session.expires }, { "Set-Cookie": `zenith_session=${session.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000` });
+    if (!rows[0]) await runSql(`INSERT INTO users (id, display_name, password_hash, created_at) VALUES (${sqlQuote(userId)}, ${sqlQuote(displayName)}, ${sqlQuote(passwordHash(password))}, ${sqlQuote(new Date().toISOString())})`);
+    else await runSql(`UPDATE users SET display_name=${sqlQuote(displayName)}, password_hash=${sqlQuote(passwordHash(password))} WHERE id=${sqlQuote(userId)}`);
+    await runSql(`DELETE FROM sessions WHERE user_id=${sqlQuote(userId)}`);
+    const session = await createSession(userId); return send(response, 201, { user: { id: userId, displayName }, expires: session.expires }, { "Set-Cookie": sessionCookie(session) });
+  }
+  if (request.method === "POST" && path === "/api/auth/session") {
+    const { displayName, password } = credentials(await body(request));
+    const rows = await runSql(`SELECT id, display_name AS displayName, password_hash AS passwordHash FROM users WHERE display_name=${sqlQuote(displayName)} LIMIT 1`, true);
+    if (!rows[0] || !passwordMatches(password, rows[0].passwordHash)) return send(response, 401, { error: "Invalid display name or passphrase." });
+    await runSql(`DELETE FROM sessions WHERE user_id=${sqlQuote(rows[0].id)}`);
+    const session = await createSession(rows[0].id); return send(response, 201, { user: { id: rows[0].id, displayName: rows[0].displayName }, expires: session.expires }, { "Set-Cookie": sessionCookie(session) });
   }
   if (request.method === "GET" && path === "/api/auth/session") { const user = await requireUser(request, response); return user && send(response, 200, { user }); }
   if (request.method === "DELETE" && path === "/api/auth/session") { const token = cookieToken(request); if (token) await runSql(`DELETE FROM sessions WHERE token_hash=${sqlQuote(tokenHash(token))}`); return send(response, 204, {}); }

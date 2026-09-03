@@ -16,8 +16,9 @@ Open http://localhost:3000. Tasks persist in `data/zenith.sqlite` (or `ZENITH_DA
 
 - `GET /api/tasks`, `POST /api/tasks`
 - `PATCH /api/tasks/:id`, `DELETE /api/tasks/:id`
-- `POST /api/auth/session`, `GET /api/auth/session`, `DELETE /api/auth/session`
+- `GET /api/auth/status`
+- `POST /api/auth/setup` (first launch), `POST /api/auth/session`, `GET /api/auth/session`, `DELETE /api/auth/session`
 - `GET /api/health`
 - `GET /api/assistant/status`
 
-Task endpoints require the HttpOnly `zenith_session` cookie. The browser creates a local session automatically; task data is isolated by user ID, so future clients can authenticate at the same boundary. The app runs fully without Ollama. When Ollama is running at `OLLAMA_URL` (default `http://127.0.0.1:11434`), the status endpoint reports its availability without loading or invoking a model. Future calendar and voice clients can use this API as their stable integration boundary.
+On first launch, set a local display name and passphrase (at least 8 characters). The passphrase is stored only as a salted scrypt hash. Subsequent access requires the credentials and creates a 30-day HttpOnly `zenith_session` cookie; signing in rotates prior sessions for that account. Task endpoints require this cookie and remain scoped to the account. The app runs fully without Ollama. When Ollama is running at `OLLAMA_URL` (default `http://127.0.0.1:11434`), the status endpoint reports its availability without loading or invoking a model. Future calendar and voice clients can use this API as their stable integration boundary.

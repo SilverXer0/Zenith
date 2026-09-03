@@ -1,4 +1,4 @@
-const state = { tasks: [], showCompleted: false };
+const state = { tasks: [], showCompleted: false, user: null };
 const $ = (selector) => document.querySelector(selector);
 const api = async (path, options) => { const response = await fetch(path, options); if (!response.ok && response.status !== 204) throw new Error((await response.json()).error); return response.status === 204 ? null : response.json(); };
 
@@ -13,16 +13,15 @@ function render() {
     toggle.addEventListener("change", () => update(task.id, { completed: toggle.checked })); item.querySelector(".delete").addEventListener("click", () => remove(task.id)); list.append(item);
   }
 }
-async function ensureSession() {
-  const existing = await fetch("/api/auth/session");
-  if (existing.ok) return existing.json();
-  return api("/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: "Local user" }) });
-}
-async function load() { await ensureSession(); const { tasks } = await api("/api/tasks"); state.tasks = tasks; render(); }
+async function loadTasks() { const { tasks } = await api("/api/tasks"); state.tasks = tasks; render(); $("#logout").hidden = false; }
 async function update(id, patch) { const { task } = await api(`/api/tasks/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }); state.tasks = state.tasks.map((existing) => existing.id === id ? task : existing); render(); }
 async function remove(id) { await api(`/api/tasks/${id}`, { method: "DELETE" }); state.tasks = state.tasks.filter((task) => task.id !== id); render(); }
 $("#taskForm").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const { task } = await api("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); state.tasks.unshift(task); event.currentTarget.reset(); $("#priority").value = "medium"; render(); $("#title").focus(); });
 $("#showCompleted").addEventListener("click", (event) => { state.showCompleted = !state.showCompleted; event.currentTarget.textContent = state.showCompleted ? "Hide completed" : "Show completed"; render(); });
 $("#today").textContent = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(new Date());
 api("/api/assistant/status").then(({ reachable, model }) => { $("#assistantStatus").textContent = reachable ? `Local assistant ready${model ? ` · ${model}` : ""}` : "Local assistant offline · tasks stay available"; }).catch(() => { $("#assistantStatus").textContent = "Local assistant unavailable"; });
-load().catch((error) => { $("#emptyState").textContent = `Could not load tasks: ${error.message}`; });
+function showAuth(setupRequired) { $("#authPanel").hidden = false; $("#manager").hidden = true; $("#authEyebrow").textContent = setupRequired ? "WELCOME TO ZENITH" : "WELCOME BACK"; $("#authTitle").textContent = setupRequired ? "Set up your local account." : "Sign in to Zenith."; $("#authIntro").textContent = setupRequired ? "Choose a passphrase. It stays local and protects access to your tasks." : "Use your local account to continue."; $("#authSubmit").textContent = setupRequired ? "Create account" : "Sign in"; $("#authForm").dataset.mode = setupRequired ? "setup" : "login"; $("#password").autocomplete = setupRequired ? "new-password" : "current-password"; }
+$("#authForm").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const mode = event.currentTarget.dataset.mode; $("#authError").textContent = ""; try { const session = await api(mode === "setup" ? "/api/auth/setup" : "/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); state.user = session.user; $("#authPanel").hidden = true; $("#manager").hidden = false; await loadTasks(); } catch (error) { $("#authError").textContent = error.message; } });
+$("#logout").addEventListener("click", async () => { await api("/api/auth/session", { method: "DELETE" }); state.user = null; state.tasks = []; $("#logout").hidden = true; showAuth(false); $("#password").value = ""; });
+async function start() { const existing = await fetch("/api/auth/session"); if (existing.ok) { const session = await existing.json(); state.user = session.user; $("#manager").hidden = false; return loadTasks(); } const { setupRequired } = await api("/api/auth/status"); showAuth(setupRequired); }
+start().catch((error) => { showAuth(false); $("#authError").textContent = error.message; });
