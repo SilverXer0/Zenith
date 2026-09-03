@@ -13,7 +13,12 @@ function render() {
     toggle.addEventListener("change", () => update(task.id, { completed: toggle.checked })); item.querySelector(".delete").addEventListener("click", () => remove(task.id)); list.append(item);
   }
 }
-async function load() { const { tasks } = await api("/api/tasks"); state.tasks = tasks; render(); }
+async function ensureSession() {
+  const existing = await fetch("/api/auth/session");
+  if (existing.ok) return existing.json();
+  return api("/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: "Local user" }) });
+}
+async function load() { await ensureSession(); const { tasks } = await api("/api/tasks"); state.tasks = tasks; render(); }
 async function update(id, patch) { const { task } = await api(`/api/tasks/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }); state.tasks = state.tasks.map((existing) => existing.id === id ? task : existing); render(); }
 async function remove(id) { await api(`/api/tasks/${id}`, { method: "DELETE" }); state.tasks = state.tasks.filter((task) => task.id !== id); render(); }
 $("#taskForm").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const { task } = await api("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); state.tasks.unshift(task); event.currentTarget.reset(); $("#priority").value = "medium"; render(); $("#title").focus(); });
