@@ -91,6 +91,10 @@ test("Zenith API integration", async () => {
 
   const created = await request("/api/tasks", jsonOptions("POST", { title: "Private task", priority: "medium" }, localCookie));
   assert.equal(created.response.status, 201);
+  const edited = await request(`/api/tasks/${created.body.task.id}`, jsonOptions("PATCH", { title: "Edited private task", notes: "Remember the deadline", project: "Personal", dueDate: "2026-09-10" }, localCookie));
+  assert.equal(edited.response.status, 200);
+  assert.equal(edited.body.task.project, "Personal");
+  assert.equal(edited.body.task.notes, "Remember the deadline");
 
   const reLogin = await request("/api/auth/session", jsonOptions("POST", { displayName: "Alice", password: "correct horse" }));
   assert.equal(reLogin.response.status, 201);
@@ -116,7 +120,7 @@ test("Zenith API integration", async () => {
   assert.equal(assistant.response.status, 200);
   assert.equal(assistant.body.message, "Focus on the private task first.");
   assert.equal(assistant.body.actions.length, 1);
-  assert.match(receivedChat.messages[0].content, /Private task/);
+  assert.match(receivedChat.messages[0].content, /private task/i);
   assert.equal(receivedChat.messages.at(-1).content, "What should I focus on?");
   const invalidAction = await request("/api/assistant/actions", jsonOptions("POST", { actions: [{ type: "delete_task", taskId: "not-your-task" }] }, reLoginCookie));
   assert.equal(invalidAction.response.status, 409);
@@ -124,6 +128,7 @@ test("Zenith API integration", async () => {
   assert.equal(confirmed.response.status, 200);
   assert.equal(confirmed.body.tasks.length, 3);
   assert.equal(confirmed.body.tasks.some((task) => task.title === "Assistant-created task"), true);
+  assert.equal(confirmed.body.tasks.some((task) => task.title === "Edited private task"), true);
 
   const logout = await request("/api/auth/session", { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(logout.response.status, 204);
