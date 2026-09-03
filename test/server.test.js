@@ -46,6 +46,29 @@ function jsonOptions(method, payload, cookie) {
   };
 }
 
+async function openEventStream(cookie) {
+  return new Promise((resolve, reject) => {
+    const url = new URL("/api/events", baseUrl);
+    const streamRequest = httpRequest(url, { headers: { Accept: "text/event-stream", Cookie: cookie } }, (response) => {
+      response.setEncoding("utf8");
+      let buffer = "";
+      const waiters = [];
+      response.on("data", (chunk) => {
+        buffer += chunk;
+        for (let index = waiters.length - 1; index >= 0; index -= 1) {
+          if (!buffer.includes(waiters[index].text)) continue;
+          waiters[index].resolve();
+          waiters.splice(index, 1);
+        }
+      });
+      response.on("error", reject);
+      resolve({ request: streamRequest, response, waitFor: (text) => new Promise((waitResolve) => { if (buffer.includes(text)) waitResolve(); else waiters.push({ text, resolve: waitResolve }); }) });
+    });
+    streamRequest.on("error", reject);
+    streamRequest.end();
+  });
+}
+
 test("Zenith API integration", async () => {
   dataDir = await mkdtemp(join(tmpdir(), "zenith-test-"));
   await writeFile(join(dataDir, "tasks.json"), JSON.stringify([legacyTask]));
@@ -99,10 +122,23 @@ test("Zenith API integration", async () => {
   const reLogin = await request("/api/auth/session", jsonOptions("POST", { displayName: "Alice", password: "correct horse" }));
   assert.equal(reLogin.response.status, 201);
   const reLoginCookie = reLogin.response.headers["set-cookie"][0].split(";", 1)[0];
-  const rotatedSession = await request("/api/tasks", { headers: { Cookie: localCookie } });
-  assert.equal(rotatedSession.response.status, 401);
+  const previousDeviceSession = await request("/api/tasks", { headers: { Cookie: localCookie } });
+  assert.equal(previousDeviceSession.response.status, 200);
   const reloadedTasks = await request("/api/tasks", { headers: { Cookie: reLoginCookie } });
   assert.equal(reloadedTasks.body.tasks.length, 2);
+
+  const unauthenticatedEvents = await request("/api/events");
+  assert.equal(unauthenticatedEvents.response.status, 401);
+  const eventStream = await openEventStream(reLoginCookie);
+  assert.equal(eventStream.response.statusCode, 200);
+  await eventStream.waitFor("event: ready");
+  const liveCreated = await request("/api/tasks", jsonOptions("POST", { title: "Live sync task" }, reLoginCookie));
+  assert.equal(liveCreated.response.status, 201);
+  await eventStream.waitFor("event: tasks_changed");
+  const liveRemoved = await request(`/api/tasks/${liveCreated.body.task.id}`, { method: "DELETE", headers: { Cookie: reLoginCookie } });
+  assert.equal(liveRemoved.response.status, 204);
+  await eventStream.waitFor("event: tasks_changed");
+  eventStream.request.destroy();
 
   let receivedChat;
   let unloadRequest;
