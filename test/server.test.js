@@ -105,10 +105,13 @@ test("Zenith API integration", async () => {
   assert.equal(reloadedTasks.body.tasks.length, 2);
 
   let receivedChat;
+  let unloadRequest;
   const ollamaMock = createServer(async (ollamaRequest, ollamaResponse) => {
     let raw = "";
     for await (const chunk of ollamaRequest) raw += chunk;
     if (ollamaRequest.url === "/api/tags") { ollamaResponse.setHeader("Content-Type", "application/json"); ollamaResponse.end(JSON.stringify({ models: [{ name: "mock-model" }] })); return; }
+    if (ollamaRequest.url === "/api/ps") { ollamaResponse.setHeader("Content-Type", "application/json"); ollamaResponse.end(JSON.stringify({ models: [{ name: "mock-model", model: "mock-model" }] })); return; }
+    if (ollamaRequest.url === "/api/generate") { unloadRequest = JSON.parse(raw); ollamaResponse.setHeader("Content-Type", "application/json"); ollamaResponse.end(JSON.stringify({ done: true })); return; }
     receivedChat = JSON.parse(raw);
     ollamaResponse.setHeader("Content-Type", "application/json");
     ollamaResponse.end(JSON.stringify({ message: { content: JSON.stringify({ reply: "Focus on the private task first.", actions: [{ type: "create_task", title: "Assistant-created task", project: "Inbox", priority: "low" }] }) } }));
@@ -129,6 +132,13 @@ test("Zenith API integration", async () => {
   assert.equal(confirmed.body.tasks.length, 3);
   assert.equal(confirmed.body.tasks.some((task) => task.title === "Assistant-created task"), true);
   assert.equal(confirmed.body.tasks.some((task) => task.title === "Edited private task"), true);
+  const unloaded = await request("/api/assistant/unload", jsonOptions("POST", {}, reLoginCookie));
+  assert.equal(unloaded.response.status, 200);
+  assert.deepEqual(unloaded.body, { unloaded: true, model: "mock-model" });
+  assert.equal(unloadRequest.keep_alive, 0);
+  const tasksAfterUnload = await request("/api/tasks", { headers: { Cookie: reLoginCookie } });
+  assert.equal(tasksAfterUnload.response.status, 200);
+  assert.equal(tasksAfterUnload.body.tasks.length, 3);
 
   const logout = await request("/api/auth/session", { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(logout.response.status, 204);
