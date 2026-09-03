@@ -107,7 +107,7 @@ test("Zenith API integration", async () => {
     if (ollamaRequest.url === "/api/tags") { ollamaResponse.setHeader("Content-Type", "application/json"); ollamaResponse.end(JSON.stringify({ models: [{ name: "mock-model" }] })); return; }
     receivedChat = JSON.parse(raw);
     ollamaResponse.setHeader("Content-Type", "application/json");
-    ollamaResponse.end(JSON.stringify({ message: { content: "Focus on the private task first." } }));
+    ollamaResponse.end(JSON.stringify({ message: { content: JSON.stringify({ reply: "Focus on the private task first.", actions: [{ type: "create_task", title: "Assistant-created task", project: "Inbox", priority: "low" }] }) } }));
   });
   const ollamaAddress = await new Promise((resolve, reject) => { ollamaMock.once("error", reject); ollamaMock.listen(0, "127.0.0.1", () => resolve(ollamaMock.address())); });
   process.env.OLLAMA_URL = `http://127.0.0.1:${ollamaAddress.port}`;
@@ -115,8 +115,15 @@ test("Zenith API integration", async () => {
   const assistant = await request("/api/assistant/chat", jsonOptions("POST", { message: "What should I focus on?" }, reLoginCookie));
   assert.equal(assistant.response.status, 200);
   assert.equal(assistant.body.message, "Focus on the private task first.");
+  assert.equal(assistant.body.actions.length, 1);
   assert.match(receivedChat.messages[0].content, /Private task/);
   assert.equal(receivedChat.messages.at(-1).content, "What should I focus on?");
+  const invalidAction = await request("/api/assistant/actions", jsonOptions("POST", { actions: [{ type: "delete_task", taskId: "not-your-task" }] }, reLoginCookie));
+  assert.equal(invalidAction.response.status, 409);
+  const confirmed = await request("/api/assistant/actions", jsonOptions("POST", { actions: assistant.body.actions }, reLoginCookie));
+  assert.equal(confirmed.response.status, 200);
+  assert.equal(confirmed.body.tasks.length, 3);
+  assert.equal(confirmed.body.tasks.some((task) => task.title === "Assistant-created task"), true);
 
   const logout = await request("/api/auth/session", { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(logout.response.status, 204);

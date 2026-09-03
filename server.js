@@ -97,6 +97,23 @@ async function currentUser(request) {
 }
 async function requireUser(request, response) { const user = await currentUser(request); if (!user) { send(response, 401, { error: "Authentication required." }); return null; } return user; }
 function taskFromRow(row) { return { id: row.id, title: row.title, notes: row.notes, project: row.project, priority: row.priority, dueDate: row.dueDate, completed: Boolean(row.completed), createdAt: row.createdAt, updatedAt: row.updatedAt }; }
+async function listTasks(userId) { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC`, true); return rows.map(taskFromRow); }
+function assistantActions(actions, tasks) {
+  if (!Array.isArray(actions)) return [];
+  const taskIds = new Set(tasks.map((task) => task.id));
+  return actions.slice(0, 5).flatMap((action) => {
+    if (!action || typeof action !== "object") return [];
+    if (action.type === "create_task" && typeof action.title === "string" && action.title.trim()) return [{ type: "create_task", title: action.title.trim().slice(0, 160), notes: String(action.notes || "").trim().slice(0, 2000), project: String(action.project || "Inbox").trim().slice(0, 80) || "Inbox", priority: ["low", "medium", "high"].includes(action.priority) ? action.priority : "medium", dueDate: action.dueDate ? String(action.dueDate).slice(0, 10) : null }];
+    if (["update_task", "complete_task", "delete_task"].includes(action.type) && taskIds.has(action.taskId)) {
+      if (action.type === "complete_task") return [{ type: action.type, taskId: action.taskId }];
+      if (action.type === "delete_task") return [{ type: action.type, taskId: action.taskId }];
+      const update = { type: action.type, taskId: action.taskId };
+      for (const field of ["title", "notes", "project", "priority", "dueDate", "completed"]) if (action[field] !== undefined) update[field] = action[field];
+      return [update];
+    }
+    return [];
+  });
+}
 async function ollamaJson(path, options = {}) {
   const baseUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434"; const target = new URL(`${baseUrl}${path}`); const transport = target.protocol === "https:" ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => { const request = transport(target, { method: options.method || "GET", headers: options.headers || {} }, (response) => { let raw = ""; response.setEncoding("utf8"); response.on("data", (chunk) => { raw += chunk; }); response.on("end", () => { if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(`Ollama returned ${response.statusCode}.`)); try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error("Ollama returned invalid JSON.")); } }); }); request.setTimeout(options.timeout || 1000, () => request.destroy(new Error("Ollama request timed out."))); request.on("error", reject); if (options.body) request.write(options.body); request.end(); });
@@ -107,15 +124,27 @@ async function assistantChat(userId, input) {
   if (!message) throw new Error("Ask the local assistant a question.");
   if (message.length > 4000) throw new Error("Keep assistant messages under 4,000 characters.");
   const rows = await runSql(`SELECT title,notes,project,priority,due_date AS dueDate,completed FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC LIMIT 100`, true);
-  const context = rows.length ? rows.map((task, index) => `${index + 1}. [${task.completed ? "done" : "open"}] ${task.title} — ${task.project}, ${task.priority} priority${task.dueDate ? `, due ${task.dueDate}` : ""}${task.notes ? ` — ${task.notes.slice(0, 500)}` : ""}`).join("\n") : "No tasks are currently saved.";
+  const context = rows.length ? rows.map((task, index) => `${index + 1}. (${task.id}) [${task.completed ? "done" : "open"}] ${task.title} — ${task.project}, ${task.priority} priority${task.dueDate ? `, due ${task.dueDate}` : ""}${task.notes ? ` — ${task.notes.slice(0, 500)}` : ""}`).join("\n") : "No tasks are currently saved.";
   const history = Array.isArray(input.history) ? input.history.filter((item) => ["user", "assistant"].includes(item?.role) && typeof item.content === "string").slice(-8).map((item) => ({ role: item.role, content: item.content.slice(0, 2000) })) : [];
   let model = process.env.OLLAMA_MODEL || null;
   if (!model) { const tags = await ollamaJson("/api/tags", { timeout: 1500 }); model = tags.models?.[0]?.name || null; }
   if (!model) throw new Error("No Ollama model is available.");
-  const result = await ollamaJson("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 30000, body: JSON.stringify({ model, stream: false, messages: [{ role: "system", content: `You are Zenith, a calm local personal manager. Answer using the user's task list below. You are read-only: do not claim to create, edit, or delete tasks. If asked to change data, explain that the user must do it in the task controls. Be concise and practical.\n\nUser task list:\n${context}` }, ...history, { role: "user", content: message }] }) });
-  const answer = result.message?.content?.trim();
-  if (!answer) throw new Error("Ollama returned an empty response.");
-  return { message: answer, model };
+  const result = await ollamaJson("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 30000, body: JSON.stringify({ model, stream: false, format: "json", messages: [{ role: "system", content: `You are Zenith, a calm local personal manager. Use the user's task list below. Return one valid JSON object with exactly these keys: reply (a concise helpful string) and actions (an array). Actions are proposals only and are never applied automatically. Use create_task with title, optional notes/project/priority/dueDate; update_task with taskId and optional fields; complete_task with taskId; or delete_task with taskId. Only use task IDs from the list. If no change is requested, return an empty actions array.\n\nUser task list:\n${context}` }, ...history, { role: "user", content: message }] }) });
+  const content = result.message?.content?.trim();
+  if (!content) throw new Error("Ollama returned an empty response.");
+  let parsed; try { parsed = JSON.parse(content); } catch { parsed = { reply: content, actions: [] }; }
+  const tasks = rows.map(taskFromRow);
+  return { message: String(parsed.reply || content).trim(), actions: assistantActions(parsed.actions, tasks), model };
+}
+async function applyAssistantActions(userId, actions) {
+  const tasks = await listTasks(userId); const valid = assistantActions(actions, tasks); if (!Array.isArray(actions) || valid.length !== actions.length) throw new Error("The proposed task changes are no longer valid. Ask the assistant again.");
+  for (const action of valid) {
+    if (action.type === "create_task") { const task = taskInput(action, { id: randomUUID(), createdAt: new Date().toISOString() }); await runSql(`INSERT INTO tasks VALUES (${sqlQuote(task.id)},${sqlQuote(userId)},${sqlQuote(task.title)},${sqlQuote(task.notes)},${sqlQuote(task.project)},${sqlQuote(task.priority)},${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},${task.completed ? 1 : 0},${sqlQuote(task.createdAt)},${sqlQuote(task.updatedAt)})`); continue; }
+    const existing = tasks.find((task) => task.id === action.taskId); if (!existing) throw new Error("The proposed task changes are no longer valid. Ask the assistant again.");
+    if (action.type === "delete_task") { await runSql(`DELETE FROM tasks WHERE id=${sqlQuote(action.taskId)} AND user_id=${sqlQuote(userId)}`); continue; }
+    const updated = taskInput(action.type === "complete_task" ? { completed: true } : action, existing); await runSql(`UPDATE tasks SET title=${sqlQuote(updated.title)},notes=${sqlQuote(updated.notes)},project=${sqlQuote(updated.project)},priority=${sqlQuote(updated.priority)},due_date=${updated.dueDate ? sqlQuote(updated.dueDate) : "NULL"},completed=${updated.completed ? 1 : 0},updated_at=${sqlQuote(updated.updatedAt)} WHERE id=${sqlQuote(action.taskId)} AND user_id=${sqlQuote(userId)}`);
+  }
+  return listTasks(userId);
 }
 
 async function api(request, response, url) {
@@ -147,7 +176,8 @@ async function api(request, response, url) {
   if (request.method === "DELETE" && path === "/api/auth/session") { const token = cookieToken(request); if (token) await runSql(`DELETE FROM sessions WHERE token_hash=${sqlQuote(tokenHash(token))}`); return send(response, 204, {}); }
   const user = await requireUser(request, response); if (!user) return;
   if (request.method === "POST" && path === "/api/assistant/chat") { try { return send(response, 200, await assistantChat(user.id, await body(request))); } catch (error) { return send(response, error.message.startsWith("Ask") || error.message.startsWith("Keep") ? 400 : 503, { error: error.message === "No Ollama model is available." ? error.message : "Local assistant is unavailable." }); } }
-  if (request.method === "GET" && path === "/api/tasks") { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE user_id=${sqlQuote(user.id)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC`, true); return send(response, 200, { tasks: rows.map(taskFromRow) }); }
+  if (request.method === "POST" && path === "/api/assistant/actions") { try { const tasks = await applyAssistantActions(user.id, (await body(request)).actions); return send(response, 200, { tasks }); } catch (error) { return send(response, 409, { error: error.message }); } }
+  if (request.method === "GET" && path === "/api/tasks") return send(response, 200, { tasks: await listTasks(user.id) });
   if (request.method === "POST" && path === "/api/tasks") { const input = await body(request); const task = taskInput(input, { id: randomUUID(), createdAt: new Date().toISOString() }); await runSql(`INSERT INTO tasks VALUES (${sqlQuote(task.id)},${sqlQuote(user.id)},${sqlQuote(task.title)},${sqlQuote(task.notes)},${sqlQuote(task.project)},${sqlQuote(task.priority)},${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},${task.completed ? 1 : 0},${sqlQuote(task.createdAt)},${sqlQuote(task.updatedAt)})`); return send(response, 201, { task }); }
   const match = path.match(/^\/api\/tasks\/([\w-]+)$/);
   if (match && request.method === "PATCH") { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE id=${sqlQuote(match[1])} AND user_id=${sqlQuote(user.id)}`, true); if (!rows[0]) return send(response, 404, { error: "Task not found." }); const task = taskInput(await body(request), taskFromRow(rows[0])); await runSql(`UPDATE tasks SET title=${sqlQuote(task.title)},notes=${sqlQuote(task.notes)},project=${sqlQuote(task.project)},priority=${sqlQuote(task.priority)},due_date=${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},completed=${task.completed ? 1 : 0},updated_at=${sqlQuote(task.updatedAt)} WHERE id=${sqlQuote(task.id)} AND user_id=${sqlQuote(user.id)}`); return send(response, 200, { task }); }
