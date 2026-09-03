@@ -12,6 +12,10 @@ npm start
 
 Open http://localhost:3000. Tasks persist in `data/zenith.sqlite` (or `ZENITH_DATA_DIR` if configured). On first start, an existing `data/tasks.json` is migrated into the initial local user and is never required again. Set `ZENITH_SQLITE` if the SQLite executable is not on your PATH.
 
+### Private cross-device access
+
+For the intended Windows home-server setup, install Tailscale on the Windows PC and each device that should access Zenith, then sign in to the same private tailnet. From PowerShell in the Zenith folder, run `scripts\start-zenith-tailscale.ps1`. The helper binds Zenith to the PC's Tailscale address and prints the private URL to open on your Mac or phone. This keeps Zenith off the public internet; do not port-forward port 3000. `ZENITH_HOST` can also be set manually when you need a different bind address.
+
 ## API surface
 
 - `GET /api/tasks`, `POST /api/tasks`
