@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -100,17 +100,41 @@ test("Zenith API integration", async () => {
   const reloadedTasks = await request("/api/tasks", { headers: { Cookie: reLoginCookie } });
   assert.equal(reloadedTasks.body.tasks.length, 2);
 
+  let receivedChat;
+  const ollamaMock = createServer(async (ollamaRequest, ollamaResponse) => {
+    let raw = "";
+    for await (const chunk of ollamaRequest) raw += chunk;
+    if (ollamaRequest.url === "/api/tags") { ollamaResponse.setHeader("Content-Type", "application/json"); ollamaResponse.end(JSON.stringify({ models: [{ name: "mock-model" }] })); return; }
+    receivedChat = JSON.parse(raw);
+    ollamaResponse.setHeader("Content-Type", "application/json");
+    ollamaResponse.end(JSON.stringify({ message: { content: "Focus on the private task first." } }));
+  });
+  const ollamaAddress = await new Promise((resolve, reject) => { ollamaMock.once("error", reject); ollamaMock.listen(0, "127.0.0.1", () => resolve(ollamaMock.address())); });
+  process.env.OLLAMA_URL = `http://127.0.0.1:${ollamaAddress.port}`;
+  process.env.OLLAMA_MODEL = "mock-model";
+  const assistant = await request("/api/assistant/chat", jsonOptions("POST", { message: "What should I focus on?" }, reLoginCookie));
+  assert.equal(assistant.response.status, 200);
+  assert.equal(assistant.body.message, "Focus on the private task first.");
+  assert.match(receivedChat.messages[0].content, /Private task/);
+  assert.equal(receivedChat.messages.at(-1).content, "What should I focus on?");
+
   const logout = await request("/api/auth/session", { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(logout.response.status, 204);
   const afterLogout = await request("/api/tasks", { headers: { Cookie: reLoginCookie } });
   assert.equal(afterLogout.response.status, 401);
+  const assistantAfterLogout = await request("/api/assistant/chat", jsonOptions("POST", { message: "Can you help?" }, reLoginCookie));
+  assert.equal(assistantAfterLogout.response.status, 401);
 
+  process.env.OLLAMA_URL = "http://127.0.0.1:1";
   const ollama = await request("/api/assistant/status");
   assert.equal(ollama.response.status, 200);
   assert.equal(ollama.body.enabled, true);
   assert.equal(typeof ollama.body.reachable, "boolean");
 
   await new Promise((resolve) => app.close(resolve));
+  await new Promise((resolve) => ollamaMock.close(resolve));
   await rm(dataDir, { recursive: true, force: true });
   delete process.env.ZENITH_DATA_DIR;
+  delete process.env.OLLAMA_URL;
+  delete process.env.OLLAMA_MODEL;
 });
