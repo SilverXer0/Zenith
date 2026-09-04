@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type AssistantAction, type AssistantResult, type Priority, type Task, type User } from "../lib/api";
+import PlanningPanels from "./insights";
 
 type Draft = { title: string; notes: string; project: string; priority: Priority; dueDate: string };
 type ChatEntry = { id: string; role: "user" | "assistant"; content: string; actions?: AssistantAction[]; applied?: boolean };
@@ -225,6 +226,7 @@ export default function Dashboard() {
   const openCount = tasks.filter((task) => !task.completed).length;
   const completedCount = tasks.length - openCount;
   const localToday = localDateKey();
+  const taskRevision = tasks.map((task) => `${task.id}:${task.updatedAt}:${task.completed}`).join("|");
 
   if (setupRequired === null && !user) return <main className="shell"><p className="muted">{authError || "Opening Zenith…"}</p></main>;
   if (!user) return <main className="shell"><AuthPanel setupRequired={setupRequired ?? false} onAuthenticated={setUser} /></main>;
@@ -261,6 +263,8 @@ export default function Dashboard() {
           <form className="flex gap-2" onSubmit={askAssistant}><input className="field min-w-0" maxLength={4000} placeholder="What should I focus on?" value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} disabled={assistantBusy} /><button className="primary-button" disabled={assistantBusy}>{assistantBusy ? "…" : "Ask"}</button></form><p className="error mt-2" role="alert">{assistantError}</p><p className="muted mt-3 text-xs">Suggestions require confirmation. Zenith will not apply task changes on its own.</p>
         </aside>
       </section>
+
+      <PlanningPanels taskRevision={taskRevision} />
 
       {editing && <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/25 p-3 sm:items-center"><form className="surface w-full max-w-lg p-6" onSubmit={saveEdit}><div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-semibold">Edit task</h2><button className="quiet-button" type="button" onClick={() => setEditing(null)}>Cancel</button></div><div className="grid gap-3"><input className="field" required maxLength={160} value={editDraft.title} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /><div className="grid gap-3 sm:grid-cols-2"><input className="field" value={editDraft.project} placeholder="Project" onChange={(event) => setEditDraft({ ...editDraft, project: event.target.value })} /><select className="field" value={editDraft.priority} onChange={(event) => setEditDraft({ ...editDraft, priority: event.target.value as Priority })}><option value="medium">Medium priority</option><option value="high">High priority</option><option value="low">Low priority</option></select></div><input className="field" type="date" value={editDraft.dueDate} onChange={(event) => setEditDraft({ ...editDraft, dueDate: event.target.value })} /><textarea className="field min-h-24" maxLength={2000} value={editDraft.notes} placeholder="Notes" onChange={(event) => setEditDraft({ ...editDraft, notes: event.target.value })} /><button className="primary-button" type="submit">Save changes</button></div></form></div>}
     </main>

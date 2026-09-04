@@ -15,6 +15,69 @@ export type Task = {
 
 export type User = { id: string; displayName: string };
 
+export type Memory = {
+  id: string;
+  category: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CalendarEvent = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string | null;
+  status: string;
+};
+
+export type CalendarStatus = {
+  configured: boolean;
+  connected: boolean;
+  calendarName: string | null;
+  connectedAt: string | null;
+};
+
+export type CalendarProjection = {
+  connected: boolean;
+  available: boolean;
+  events: CalendarEvent[];
+};
+
+export type Briefing = {
+  date: string;
+  counts: { open: number; overdue: number; dueToday: number };
+  focusTasks: Task[];
+};
+
+export type MorningBriefing = {
+  date: string;
+  summary: string;
+  overdue: Task[];
+  dueToday: Task[];
+  upcoming: Task[];
+  calendar: CalendarProjection;
+};
+
+export type WeeklyPlan = {
+  start: string;
+  end: string;
+  counts: { open: number; overdue: number; scheduled: number; unscheduled: number };
+  days: { date: string; tasks: Task[] }[];
+  unscheduled: Task[];
+  calendar: CalendarProjection;
+};
+
+export type DailySummary = {
+  date: string;
+  summary: string;
+  counts: { completed: number; created: number; open: number };
+  completedTasks: Task[];
+  createdTasks: Task[];
+};
+
 export type AssistantAction = {
   type: "create_task" | "update_task" | "complete_task" | "delete_task";
   taskId?: string;

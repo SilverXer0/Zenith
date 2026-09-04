@@ -23,7 +23,7 @@ The Next app proxies `/api/*` to `http://127.0.0.1:8000` by default. Set `ZENITH
 
 ## Current slice
 
-The shell includes local setup/sign-in, authenticated task capture and editing, completion/deletion, assistant chat with confirmation, Ollama availability/release controls, and authenticated live task updates. Calendar, memory, briefing, voice, PWA, and notification panels will be added in later independently verified slices.
+The shell includes local setup/sign-in, authenticated task capture and editing, completion/deletion, assistant chat with confirmation, Ollama availability/release controls, authenticated live task updates, optional read-only Calendar connection controls, task planning, weekly planning, daily completion history, and persistent context notes. Voice, PWA, and notification panels will be added in later independently verified slices.
 
 ## Checks
 
