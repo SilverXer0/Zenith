@@ -92,6 +92,7 @@ test("Zenith API integration", async () => {
   assert.match(page.body, /Speak/);
   assert.match(page.body, /Enable reminders/);
   assert.match(page.body, /Help Zenith remember/);
+  assert.match(page.body, /Today’s focus/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
   assert.match(serviceWorker.body, /api/);
@@ -128,10 +129,16 @@ test("Zenith API integration", async () => {
 
   const created = await request("/api/tasks", jsonOptions("POST", { title: "Private task", priority: "medium" }, localCookie));
   assert.equal(created.response.status, 201);
-  const edited = await request(`/api/tasks/${created.body.task.id}`, jsonOptions("PATCH", { title: "Edited private task", notes: "Remember the deadline", project: "Personal", dueDate: "2026-09-10" }, localCookie));
+  const edited = await request(`/api/tasks/${created.body.task.id}`, jsonOptions("PATCH", { title: "Edited private task", notes: "Remember the deadline", project: "Personal", dueDate: "2026-09-03" }, localCookie));
   assert.equal(edited.response.status, 200);
   assert.equal(edited.body.task.project, "Personal");
   assert.equal(edited.body.task.notes, "Remember the deadline");
+  const briefing = await request("/api/briefing?date=2026-09-03", { headers: { Cookie: localCookie } });
+  assert.equal(briefing.response.status, 200);
+  assert.deepEqual(briefing.body.counts, { open: 2, overdue: 0, dueToday: 1 });
+  assert.equal(briefing.body.focusTasks[0].title, "Edited private task");
+  const invalidBriefing = await request("/api/briefing?date=not-a-date", { headers: { Cookie: localCookie } });
+  assert.equal(invalidBriefing.response.status, 400);
 
   const reLogin = await request("/api/auth/session", jsonOptions("POST", { displayName: "Alice", password: "correct horse" }));
   assert.equal(reLogin.response.status, 201);

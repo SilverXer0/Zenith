@@ -28,6 +28,7 @@ To use private HTTPS on the Windows home server, run `scripts\start-zenith-tails
 - `PATCH /api/tasks/:id`, `DELETE /api/tasks/:id`
 - `GET /api/memory`, `POST /api/memory`
 - `PATCH /api/memory/:id`, `DELETE /api/memory/:id`
+- `GET /api/briefing` (read-only daily task focus)
 - `GET /api/auth/status`
 - `POST /api/auth/setup` (first launch), `POST /api/auth/session`, `GET /api/auth/session`, `DELETE /api/auth/session`
 - `GET /api/health`
@@ -83,6 +84,10 @@ Assistant replies show a `Speak reply` control when text-to-speech is configured
 ### Persistent context
 
 The `Help Zenith remember` panel stores short, user-entered preferences, routines, and project context in the local SQLite database. The signed-in assistant receives the latest context notes alongside tasks and Calendar events. Context is never created automatically, and each note can be edited or deleted from the panel.
+
+### Daily briefing
+
+The `Today’s focus` panel is generated locally from open tasks. It surfaces overdue and due-today counts and ranks up to five tasks by due date and priority. It does not require Ollama, so the basic planning view remains available while the local model is unloaded or offline.
 
 ### Local task reminders
 
