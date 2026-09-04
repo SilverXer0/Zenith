@@ -2,6 +2,8 @@
 
 Zenith is a local-first personal manager MVP: a responsive task list with a small HTTP API and an optional local Ollama boundary.
 
+The working app below still uses Node and the current responsive UI. An isolated [Python/FastAPI development backend](backend/README.md) now starts the migration to the [planned architecture](docs/architecture-migration.md); it is not yet a replacement for the Windows service.
+
 ## Run it
 
 Requires Node.js 20 or newer and the `sqlite3` command-line runtime.
