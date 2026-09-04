@@ -93,6 +93,7 @@ test("Zenith API integration", async () => {
   assert.match(page.body, /Enable reminders/);
   assert.match(page.body, /Help Zenith remember/);
   assert.match(page.body, /Today’s focus/);
+  assert.match(page.body, /MORNING BRIEFING/);
   assert.match(page.body, /Shape the week/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
@@ -140,6 +141,13 @@ test("Zenith API integration", async () => {
   assert.equal(briefing.body.focusTasks[0].title, "Edited private task");
   const invalidBriefing = await request("/api/briefing?date=not-a-date", { headers: { Cookie: localCookie } });
   assert.equal(invalidBriefing.response.status, 400);
+  const morningBriefing = await request("/api/briefing/morning?date=2026-09-03", { headers: { Cookie: localCookie } });
+  assert.equal(morningBriefing.response.status, 200);
+  assert.equal(morningBriefing.body.summary, "1 due today");
+  assert.equal(morningBriefing.body.dueToday[0].title, "Edited private task");
+  assert.equal(morningBriefing.body.calendar.connected, false);
+  const invalidMorningBriefing = await request("/api/briefing/morning?date=2026-02-31", { headers: { Cookie: localCookie } });
+  assert.equal(invalidMorningBriefing.response.status, 400);
   const weeklyPlan = await request("/api/weekly-plan?start=2026-09-01", { headers: { Cookie: localCookie } });
   assert.equal(weeklyPlan.response.status, 200);
   assert.deepEqual(weeklyPlan.body.counts, { open: 2, overdue: 0, scheduled: 1, unscheduled: 1 });
@@ -217,6 +225,11 @@ test("Zenith API integration", async () => {
   assert.equal(connectedWeeklyPlan.body.calendar.connected, true);
   assert.equal(connectedWeeklyPlan.body.calendar.available, true);
   assert.equal(connectedWeeklyPlan.body.calendar.events[0].title, "Focus time");
+  const connectedMorningBriefing = await request("/api/briefing/morning?date=2026-09-04", { headers: { Cookie: reLoginCookie } });
+  assert.equal(connectedMorningBriefing.response.status, 200);
+  assert.equal(connectedMorningBriefing.body.calendar.connected, true);
+  assert.equal(connectedMorningBriefing.body.calendar.available, true);
+  assert.equal(connectedMorningBriefing.body.calendar.events[0].title, "Focus time");
   const unauthenticatedEvents = await request("/api/events");
   assert.equal(unauthenticatedEvents.response.status, 401);
   const eventStream = await openEventStream(reLoginCookie);

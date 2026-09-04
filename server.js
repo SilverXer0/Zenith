@@ -158,6 +158,13 @@ async function buildBriefing(userId, date) {
   const focusTasks = [...open].sort((a, b) => focusTaskSort(a, b, date)).slice(0, 5);
   return { date, counts: { open: open.length, overdue: overdue.length, dueToday: dueToday.length }, focusTasks };
 }
+async function buildMorningBriefing(userId, date) {
+  const tasks = await listTasks(userId); const open = tasks.filter((task) => !task.completed); const startDate = new Date(`${date}T00:00:00Z`); const nextDate = new Date(startDate.getTime() + 86400000).toISOString().slice(0, 10); const horizonDate = new Date(startDate.getTime() + 4 * 86400000).toISOString().slice(0, 10);
+  const overdue = open.filter((task) => task.dueDate && task.dueDate < date); const dueToday = open.filter((task) => task.dueDate === date); const upcoming = open.filter((task) => task.dueDate && task.dueDate > date && task.dueDate < horizonDate).sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).slice(0, 5);
+  const calendar = { connected: false, available: false, events: [] }; const account = await calendarAccount(userId);
+  if (account) { calendar.connected = true; try { calendar.events = await listCalendarEvents(userId, { start: startDate, end: new Date(`${nextDate}T00:00:00Z`) }); calendar.available = true; } catch { /* Calendar is optional for the briefing. */ } }
+  const summary = []; if (overdue.length) summary.push(`${overdue.length} overdue`); if (dueToday.length) summary.push(`${dueToday.length} due today`); if (calendar.events.length) summary.push(`${calendar.events.length} calendar event${calendar.events.length === 1 ? "" : "s"}`); return { date, summary: summary.length ? summary.join(" · ") : "No urgent items this morning.", overdue, dueToday, upcoming, calendar };
+}
 function weeklyPlanStart(url) {
   const start = url.searchParams.get("start") || new Date().toISOString().slice(0, 10);
   if (!validDateString(start)) throw typedError("Weekly plan start must be a valid YYYY-MM-DD date.", "WEEKLY_BAD_DATE");
@@ -397,6 +404,7 @@ async function api(request, response, url) {
   if (memoryMatch && request.method === "PATCH") { const rows = await runSql(`SELECT id,category,content,created_at AS createdAt,updated_at AS updatedAt FROM memory_items WHERE id=${sqlQuote(memoryMatch[1])} AND user_id=${sqlQuote(user.id)}`, true); if (!rows[0]) return send(response, 404, { error: "Context note not found." }); const memory = memoryInput(await body(request), memoryFromRow(rows[0])); await runSql(`UPDATE memory_items SET category=${sqlQuote(memory.category)},content=${sqlQuote(memory.content)},updated_at=${sqlQuote(memory.updatedAt)} WHERE id=${sqlQuote(memory.id)} AND user_id=${sqlQuote(user.id)}`); return send(response, 200, { memory }); }
   if (memoryMatch && request.method === "DELETE") { const result = await runSql(`DELETE FROM memory_items WHERE id=${sqlQuote(memoryMatch[1])} AND user_id=${sqlQuote(user.id)}; SELECT changes() AS changes`, true); if (!result.at(-1)?.changes) return send(response, 404, { error: "Context note not found." }); return send(response, 204, {}); }
   if (request.method === "GET" && path === "/api/briefing") { try { return send(response, 200, await buildBriefing(user.id, briefingDate(url))); } catch (error) { if (error.code === "BRIEFING_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
+  if (request.method === "GET" && path === "/api/briefing/morning") { try { return send(response, 200, await buildMorningBriefing(user.id, briefingDate(url))); } catch (error) { if (error.code === "BRIEFING_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
   if (request.method === "GET" && path === "/api/weekly-plan") { try { return send(response, 200, await buildWeeklyPlan(user.id, weeklyPlanStart(url))); } catch (error) { if (error.code === "WEEKLY_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
   if (request.method === "GET" && path === "/api/voice/status") return send(response, 200, { configured: voiceConfigured(), ttsConfigured: ttsConfigured() });
   if (request.method === "POST" && path === "/api/voice/transcribe") {

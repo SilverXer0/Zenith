@@ -29,6 +29,7 @@ To use private HTTPS on the Windows home server, run `scripts\start-zenith-tails
 - `GET /api/memory`, `POST /api/memory`
 - `PATCH /api/memory/:id`, `DELETE /api/memory/:id`
 - `GET /api/briefing` (read-only daily task focus)
+- `GET /api/briefing/morning` (read-only morning summary)
 - `GET /api/weekly-plan` (read-only seven-day task and calendar plan)
 - `GET /api/auth/status`
 - `POST /api/auth/setup` (first launch), `POST /api/auth/session`, `GET /api/auth/session`, `DELETE /api/auth/session`
@@ -89,6 +90,8 @@ The `Help Zenith remember` panel stores short, user-entered preferences, routine
 ### Daily briefing
 
 The `Today’s focus` panel is generated locally from open tasks. It surfaces overdue and due-today counts and ranks up to five tasks by due date and priority. It does not require Ollama, so the basic planning view remains available while the local model is unloaded or offline.
+
+The `Morning briefing` panel summarizes urgent work, today’s due tasks, the next few days of scheduled tasks, and today’s Calendar events when connected. It is generated on demand from local data and does not require Ollama; scheduled delivery and model-written narrative can be added later.
 
 The `Shape the week` panel groups open tasks by due date, separates unscheduled work, and reports Google Calendar events when Calendar is connected. It is read-only and can be refreshed without involving the local model.
 
