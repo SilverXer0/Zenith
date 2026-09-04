@@ -34,11 +34,13 @@ async function initializeDatabase() {
   await runSql(`PRAGMA busy_timeout = 5000;
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT 'Inbox', priority TEXT NOT NULL DEFAULT 'medium', due_date TEXT, completed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT 'Inbox', priority TEXT NOT NULL DEFAULT 'medium', due_date TEXT, completed INTEGER NOT NULL DEFAULT 0, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS task_completion_events (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, task_id TEXT NOT NULL, title TEXT NOT NULL, completed_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS memory_items (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_accounts (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, access_token TEXT, refresh_token TEXT NOT NULL, token_expires_at TEXT, calendar_name TEXT, connected_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_oauth_states (state TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tasks_user_updated ON tasks(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS task_completion_user_time ON task_completion_events(user_id, completed_at);
 CREATE INDEX IF NOT EXISTS memory_user_updated ON memory_items(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expires_at);`);
@@ -47,6 +49,8 @@ CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expire
     await runSql("ALTER TABLE users ADD COLUMN password_hash TEXT");
     await runSql("DELETE FROM sessions");
   }
+  const taskColumns = await runSql("PRAGMA table_info(tasks)", true);
+  if (!taskColumns.some((column) => column.name === "completed_at")) await runSql("ALTER TABLE tasks ADD COLUMN completed_at TEXT");
   const users = await runSql("SELECT id FROM users ORDER BY created_at LIMIT 1", true);
   let userId = users[0]?.id;
   if (!userId) {
@@ -60,7 +64,7 @@ CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expire
       try { tasks = JSON.parse(await readFile(legacyTaskFile, "utf8")); } catch { /* malformed legacy data is ignored */ }
       for (const task of Array.isArray(tasks) ? tasks : []) {
         if (!task?.id || !task?.title) continue;
-        await runSql(`INSERT OR IGNORE INTO tasks (id, user_id, title, notes, project, priority, due_date, completed, created_at, updated_at) VALUES (${sqlQuote(task.id)}, ${sqlQuote(userId)}, ${sqlQuote(task.title)}, ${sqlQuote(task.notes || "")}, ${sqlQuote(task.project || "Inbox")}, ${sqlQuote(["low", "medium", "high"].includes(task.priority) ? task.priority : "medium")}, ${task.dueDate ? sqlQuote(task.dueDate) : "NULL"}, ${task.completed ? 1 : 0}, ${sqlQuote(task.createdAt || new Date().toISOString())}, ${sqlQuote(task.updatedAt || task.createdAt || new Date().toISOString())})`);
+        await runSql(`INSERT OR IGNORE INTO tasks (id, user_id, title, notes, project, priority, due_date, completed, completed_at, created_at, updated_at) VALUES (${sqlQuote(task.id)}, ${sqlQuote(userId)}, ${sqlQuote(task.title)}, ${sqlQuote(task.notes || "")}, ${sqlQuote(task.project || "Inbox")}, ${sqlQuote(["low", "medium", "high"].includes(task.priority) ? task.priority : "medium")}, ${task.dueDate ? sqlQuote(task.dueDate) : "NULL"}, ${task.completed ? 1 : 0}, NULL, ${sqlQuote(task.createdAt || new Date().toISOString())}, ${sqlQuote(task.updatedAt || task.createdAt || new Date().toISOString())})`);
       }
       await runSql("CREATE TABLE legacy_migration (migrated_at TEXT NOT NULL)");
       await runSql(`INSERT INTO legacy_migration VALUES (${sqlQuote(new Date().toISOString())})`);
@@ -82,6 +86,8 @@ function taskInput(input, existing = {}) {
   if (!title) throw new Error("A task needs a title.");
   return { ...existing, title, notes: (input.notes ?? existing.notes ?? "").trim(), project: (input.project ?? existing.project ?? "Inbox").trim() || "Inbox", priority: ["low", "medium", "high"].includes(input.priority) ? input.priority : (existing.priority || "medium"), dueDate: input.dueDate === undefined ? (existing.dueDate || null) : (input.dueDate || null), completed: input.completed === undefined ? Boolean(existing.completed) : Boolean(input.completed), updatedAt: new Date().toISOString() };
 }
+function completionEventTime(task, existing = {}) { return task.completed && !Boolean(existing.completed) ? task.updatedAt : null; }
+async function recordCompletion(userId, task, completedAt) { if (!completedAt) return; await runSql(`INSERT INTO task_completion_events (id,user_id,task_id,title,completed_at) VALUES (${sqlQuote(randomUUID())},${sqlQuote(userId)},${sqlQuote(task.id)},${sqlQuote(task.title)},${sqlQuote(completedAt)})`); }
 function memoryInput(input, existing = {}) {
   const content = String(input.content ?? existing.content ?? "").trim();
   if (!content) throw new Error("Context needs some text.");
@@ -139,8 +145,8 @@ function broadcastTasksChanged(userId) {
     try { client.response.write(`event: tasks_changed\ndata: {}\n\n`); } catch { /* cleanup handles closed streams */ }
   }
 }
-function taskFromRow(row) { return { id: row.id, title: row.title, notes: row.notes, project: row.project, priority: row.priority, dueDate: row.dueDate, completed: Boolean(row.completed), createdAt: row.createdAt, updatedAt: row.updatedAt }; }
-async function listTasks(userId) { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC`, true); return rows.map(taskFromRow); }
+function taskFromRow(row) { return { id: row.id, title: row.title, notes: row.notes, project: row.project, priority: row.priority, dueDate: row.dueDate, completed: Boolean(row.completed), completedAt: row.completedAt || null, createdAt: row.createdAt, updatedAt: row.updatedAt }; }
+async function listTasks(userId) { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,completed_at AS completedAt,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC`, true); return rows.map(taskFromRow); }
 function briefingDate(url) {
   const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
   if (!validDateString(date)) throw typedError("Briefing date must be a valid YYYY-MM-DD date.", "BRIEFING_BAD_DATE");
@@ -164,6 +170,16 @@ async function buildMorningBriefing(userId, date) {
   const calendar = { connected: false, available: false, events: [] }; const account = await calendarAccount(userId);
   if (account) { calendar.connected = true; try { calendar.events = await listCalendarEvents(userId, { start: startDate, end: new Date(`${nextDate}T00:00:00Z`) }); calendar.available = true; } catch { /* Calendar is optional for the briefing. */ } }
   const summary = []; if (overdue.length) summary.push(`${overdue.length} overdue`); if (dueToday.length) summary.push(`${dueToday.length} due today`); if (calendar.events.length) summary.push(`${calendar.events.length} calendar event${calendar.events.length === 1 ? "" : "s"}`); return { date, summary: summary.length ? summary.join(" · ") : "No urgent items this morning.", overdue, dueToday, upcoming, calendar };
+}
+function summaryWindow(url) {
+  const date = briefingDate(url); const offset = Number(url.searchParams.get("offset") || 0);
+  if (!Number.isInteger(offset) || offset < -840 || offset > 840) throw typedError("Summary timezone offset must be a valid number of minutes.", "SUMMARY_BAD_OFFSET");
+  const start = new Date(Date.parse(`${date}T00:00:00Z`) + offset * 60000); return { date, start, end: new Date(start.getTime() + 86400000) };
+}
+async function buildDailySummary(userId, window) {
+  const completedTasks = await runSql(`SELECT task_id AS taskId,title,completed_at AS completedAt FROM task_completion_events WHERE user_id=${sqlQuote(userId)} AND completed_at >= ${sqlQuote(window.start.toISOString())} AND completed_at < ${sqlQuote(window.end.toISOString())} ORDER BY completed_at`, true);
+  const tasks = await listTasks(userId); const createdTasks = tasks.filter((task) => task.createdAt >= window.start.toISOString() && task.createdAt < window.end.toISOString());
+  return { date: window.date, summary: completedTasks.length ? `${completedTasks.length} task${completedTasks.length === 1 ? "" : "s"} completed today.` : "No tasks completed today.", counts: { completed: completedTasks.length, created: createdTasks.length, open: tasks.filter((task) => !task.completed).length }, completedTasks, createdTasks };
 }
 function weeklyPlanStart(url) {
   const start = url.searchParams.get("start") || new Date().toISOString().slice(0, 10);
@@ -339,10 +355,10 @@ async function unloadAssistantModel(input = {}) {
 async function applyAssistantActions(userId, actions) {
   const tasks = await listTasks(userId); const valid = assistantActions(actions, tasks); if (!Array.isArray(actions) || valid.length !== actions.length) throw new Error("The proposed task changes are no longer valid. Ask the assistant again.");
   for (const action of valid) {
-    if (action.type === "create_task") { const task = taskInput(action, { id: randomUUID(), createdAt: new Date().toISOString() }); await runSql(`INSERT INTO tasks VALUES (${sqlQuote(task.id)},${sqlQuote(userId)},${sqlQuote(task.title)},${sqlQuote(task.notes)},${sqlQuote(task.project)},${sqlQuote(task.priority)},${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},${task.completed ? 1 : 0},${sqlQuote(task.createdAt)},${sqlQuote(task.updatedAt)})`); continue; }
+    if (action.type === "create_task") { const task = taskInput(action, { id: randomUUID(), createdAt: new Date().toISOString() }); const completedAt = completionEventTime(task); await runSql(`INSERT INTO tasks (id,user_id,title,notes,project,priority,due_date,completed,completed_at,created_at,updated_at) VALUES (${sqlQuote(task.id)},${sqlQuote(userId)},${sqlQuote(task.title)},${sqlQuote(task.notes)},${sqlQuote(task.project)},${sqlQuote(task.priority)},${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},${task.completed ? 1 : 0},${completedAt ? sqlQuote(completedAt) : "NULL"},${sqlQuote(task.createdAt)},${sqlQuote(task.updatedAt)})`); await recordCompletion(userId, task, completedAt); continue; }
     const existing = tasks.find((task) => task.id === action.taskId); if (!existing) throw new Error("The proposed task changes are no longer valid. Ask the assistant again.");
     if (action.type === "delete_task") { await runSql(`DELETE FROM tasks WHERE id=${sqlQuote(action.taskId)} AND user_id=${sqlQuote(userId)}`); continue; }
-    const updated = taskInput(action.type === "complete_task" ? { completed: true } : action, existing); await runSql(`UPDATE tasks SET title=${sqlQuote(updated.title)},notes=${sqlQuote(updated.notes)},project=${sqlQuote(updated.project)},priority=${sqlQuote(updated.priority)},due_date=${updated.dueDate ? sqlQuote(updated.dueDate) : "NULL"},completed=${updated.completed ? 1 : 0},updated_at=${sqlQuote(updated.updatedAt)} WHERE id=${sqlQuote(action.taskId)} AND user_id=${sqlQuote(userId)}`);
+    const updated = taskInput(action.type === "complete_task" ? { completed: true } : action, existing); const completedAt = completionEventTime(updated, existing); await runSql(`UPDATE tasks SET title=${sqlQuote(updated.title)},notes=${sqlQuote(updated.notes)},project=${sqlQuote(updated.project)},priority=${sqlQuote(updated.priority)},due_date=${updated.dueDate ? sqlQuote(updated.dueDate) : "NULL"},completed=${updated.completed ? 1 : 0},completed_at=${updated.completed ? (existing.completedAt ? sqlQuote(existing.completedAt) : (completedAt ? sqlQuote(completedAt) : "NULL")) : "NULL"},updated_at=${sqlQuote(updated.updatedAt)} WHERE id=${sqlQuote(action.taskId)} AND user_id=${sqlQuote(userId)}`); await recordCompletion(userId, updated, completedAt);
   }
   return listTasks(userId);
 }
@@ -405,6 +421,7 @@ async function api(request, response, url) {
   if (memoryMatch && request.method === "DELETE") { const result = await runSql(`DELETE FROM memory_items WHERE id=${sqlQuote(memoryMatch[1])} AND user_id=${sqlQuote(user.id)}; SELECT changes() AS changes`, true); if (!result.at(-1)?.changes) return send(response, 404, { error: "Context note not found." }); return send(response, 204, {}); }
   if (request.method === "GET" && path === "/api/briefing") { try { return send(response, 200, await buildBriefing(user.id, briefingDate(url))); } catch (error) { if (error.code === "BRIEFING_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
   if (request.method === "GET" && path === "/api/briefing/morning") { try { return send(response, 200, await buildMorningBriefing(user.id, briefingDate(url))); } catch (error) { if (error.code === "BRIEFING_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
+  if (request.method === "GET" && path === "/api/summaries/daily") { try { return send(response, 200, await buildDailySummary(user.id, summaryWindow(url))); } catch (error) { if (["BRIEFING_BAD_DATE", "SUMMARY_BAD_OFFSET"].includes(error.code)) return send(response, 400, { error: error.message }); throw error; } }
   if (request.method === "GET" && path === "/api/weekly-plan") { try { return send(response, 200, await buildWeeklyPlan(user.id, weeklyPlanStart(url))); } catch (error) { if (error.code === "WEEKLY_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
   if (request.method === "GET" && path === "/api/voice/status") return send(response, 200, { configured: voiceConfigured(), ttsConfigured: ttsConfigured() });
   if (request.method === "POST" && path === "/api/voice/transcribe") {
@@ -441,9 +458,9 @@ async function api(request, response, url) {
   if (request.method === "POST" && path === "/api/assistant/unload") { try { return send(response, 200, await unloadAssistantModel(await body(request))); } catch (error) { return send(response, error.message === "No Ollama model is configured." ? 409 : 503, { error: error.message === "No Ollama model is configured." ? error.message : "Local assistant is unavailable." }); } }
   if (request.method === "POST" && path === "/api/assistant/actions") { try { const tasks = await applyAssistantActions(user.id, (await body(request)).actions); broadcastTasksChanged(user.id); return send(response, 200, { tasks }); } catch (error) { return send(response, 409, { error: error.message }); } }
   if (request.method === "GET" && path === "/api/tasks") return send(response, 200, { tasks: await listTasks(user.id) });
-  if (request.method === "POST" && path === "/api/tasks") { const input = await body(request); const task = taskInput(input, { id: randomUUID(), createdAt: new Date().toISOString() }); await runSql(`INSERT INTO tasks VALUES (${sqlQuote(task.id)},${sqlQuote(user.id)},${sqlQuote(task.title)},${sqlQuote(task.notes)},${sqlQuote(task.project)},${sqlQuote(task.priority)},${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},${task.completed ? 1 : 0},${sqlQuote(task.createdAt)},${sqlQuote(task.updatedAt)})`); broadcastTasksChanged(user.id); return send(response, 201, { task }); }
+  if (request.method === "POST" && path === "/api/tasks") { const input = await body(request); const task = taskInput(input, { id: randomUUID(), createdAt: new Date().toISOString() }); const completedAt = completionEventTime(task); await runSql(`INSERT INTO tasks (id,user_id,title,notes,project,priority,due_date,completed,completed_at,created_at,updated_at) VALUES (${sqlQuote(task.id)},${sqlQuote(user.id)},${sqlQuote(task.title)},${sqlQuote(task.notes)},${sqlQuote(task.project)},${sqlQuote(task.priority)},${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},${task.completed ? 1 : 0},${completedAt ? sqlQuote(completedAt) : "NULL"},${sqlQuote(task.createdAt)},${sqlQuote(task.updatedAt)})`); await recordCompletion(user.id, task, completedAt); broadcastTasksChanged(user.id); return send(response, 201, { task: { ...task, completedAt: completedAt || null } }); }
   const match = path.match(/^\/api\/tasks\/([\w-]+)$/);
-  if (match && request.method === "PATCH") { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE id=${sqlQuote(match[1])} AND user_id=${sqlQuote(user.id)}`, true); if (!rows[0]) return send(response, 404, { error: "Task not found." }); const task = taskInput(await body(request), taskFromRow(rows[0])); await runSql(`UPDATE tasks SET title=${sqlQuote(task.title)},notes=${sqlQuote(task.notes)},project=${sqlQuote(task.project)},priority=${sqlQuote(task.priority)},due_date=${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},completed=${task.completed ? 1 : 0},updated_at=${sqlQuote(task.updatedAt)} WHERE id=${sqlQuote(task.id)} AND user_id=${sqlQuote(user.id)}`); broadcastTasksChanged(user.id); return send(response, 200, { task }); }
+  if (match && request.method === "PATCH") { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,completed_at AS completedAt,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE id=${sqlQuote(match[1])} AND user_id=${sqlQuote(user.id)}`, true); if (!rows[0]) return send(response, 404, { error: "Task not found." }); const existing = taskFromRow(rows[0]); const task = taskInput(await body(request), existing); const completedAt = completionEventTime(task, existing); await runSql(`UPDATE tasks SET title=${sqlQuote(task.title)},notes=${sqlQuote(task.notes)},project=${sqlQuote(task.project)},priority=${sqlQuote(task.priority)},due_date=${task.dueDate ? sqlQuote(task.dueDate) : "NULL"},completed=${task.completed ? 1 : 0},completed_at=${task.completed ? (existing.completedAt ? sqlQuote(existing.completedAt) : (completedAt ? sqlQuote(completedAt) : "NULL")) : "NULL"},updated_at=${sqlQuote(task.updatedAt)} WHERE id=${sqlQuote(task.id)} AND user_id=${sqlQuote(user.id)}`); await recordCompletion(user.id, task, completedAt); broadcastTasksChanged(user.id); return send(response, 200, { task: { ...task, completedAt: task.completed ? (existing.completedAt || completedAt || null) : null } }); }
   if (match && request.method === "DELETE") { const result = await runSql(`DELETE FROM tasks WHERE id=${sqlQuote(match[1])} AND user_id=${sqlQuote(user.id)}; SELECT changes() AS changes`, true); if (!result.at(-1)?.changes) return send(response, 404, { error: "Task not found." }); broadcastTasksChanged(user.id); return send(response, 204, {}); }
   return send(response, 404, { error: "Route not found." });
 }

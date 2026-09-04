@@ -95,6 +95,7 @@ test("Zenith API integration", async () => {
   assert.match(page.body, /Today’s focus/);
   assert.match(page.body, /MORNING BRIEFING/);
   assert.match(page.body, /Shape the week/);
+  assert.match(page.body, /What got done/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
   assert.match(serviceWorker.body, /api/);
@@ -103,6 +104,8 @@ test("Zenith API integration", async () => {
   const { response: unauthenticatedResponse, body: unauthenticatedBody } = unauthenticated;
   assert.equal(unauthenticatedResponse.status, 401);
   assert.equal(unauthenticatedBody.error, "Authentication required.");
+  const unauthenticatedSummary = await request("/api/summaries/daily");
+  assert.equal(unauthenticatedSummary.response.status, 401);
 
   const authStatus = await request("/api/auth/status");
   assert.equal(authStatus.response.status, 200);
@@ -155,6 +158,17 @@ test("Zenith API integration", async () => {
   assert.equal(weeklyPlan.body.unscheduled[0].title, "Migrated task");
   const invalidWeeklyPlan = await request("/api/weekly-plan?start=2026-02-31", { headers: { Cookie: localCookie } });
   assert.equal(invalidWeeklyPlan.response.status, 400);
+  const completion = await request(`/api/tasks/${created.body.task.id}`, jsonOptions("PATCH", { completed: true }, localCookie));
+  assert.equal(completion.response.status, 200);
+  assert.equal(completion.body.task.completed, true);
+  assert.equal(typeof completion.body.task.completedAt, "string");
+  const summaryDate = new Date().toISOString().slice(0, 10);
+  const dailySummary = await request(`/api/summaries/daily?date=${summaryDate}&offset=0`, { headers: { Cookie: localCookie } });
+  assert.equal(dailySummary.response.status, 200);
+  assert.equal(dailySummary.body.counts.completed, 1);
+  assert.equal(dailySummary.body.completedTasks[0].title, "Edited private task");
+  const invalidSummaryOffset = await request(`/api/summaries/daily?date=${summaryDate}&offset=10000`, { headers: { Cookie: localCookie } });
+  assert.equal(invalidSummaryOffset.response.status, 400);
 
   const reLogin = await request("/api/auth/session", jsonOptions("POST", { displayName: "Alice", password: "correct horse" }));
   assert.equal(reLogin.response.status, 201);
