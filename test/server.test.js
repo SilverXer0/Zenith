@@ -90,6 +90,7 @@ test("Zenith API integration", async () => {
   assert.match(page.body, /Capture to Inbox/);
   assert.match(page.body, /Add project, priority, date, or notes/);
   assert.match(page.body, /Speak/);
+  assert.match(page.body, /Enable reminders/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
   assert.match(serviceWorker.body, /api/);

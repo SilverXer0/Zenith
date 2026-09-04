@@ -5,8 +5,27 @@ const $ = (selector) => document.querySelector(selector);
 const api = async (path, options) => { const response = await fetch(path, options); if (!response.ok && response.status !== 204) throw new Error((await response.json()).error); return response.status === 204 ? null : response.json(); };
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
-function isToday(date) { return date === new Date().toISOString().slice(0, 10); }
+function localDateString(date = new Date()) { const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return offsetDate.toISOString().slice(0, 10); }
+function isToday(date) { return date === localDateString(); }
 function formatDue(date) { if (!date) return "No due date"; return isToday(date) ? "Due today" : `Due ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(`${date}T12:00:00`))}`; }
+function updateNotificationUI() {
+  const button = $("#enableNotifications"); const status = $("#notificationStatus");
+  if (!("Notification" in window)) { button.hidden = true; status.textContent = ""; return; }
+  if (!window.isSecureContext) { button.hidden = true; status.textContent = "Reminders need a secure connection."; return; }
+  if (Notification.permission === "granted") { button.hidden = true; status.textContent = "Task reminders on"; return; }
+  button.hidden = false; button.disabled = false;
+  status.textContent = Notification.permission === "denied" ? "Reminders are blocked in browser settings." : "";
+}
+function notifyDueTasks(tasks) {
+  if (!("Notification" in window) || !window.isSecureContext || Notification.permission !== "granted") return;
+  const today = localDateString(); const storageKey = `zenith-notified-${today}`; let notified = new Set();
+  try { notified = new Set(JSON.parse(localStorage.getItem(storageKey) || "[]")); } catch {}
+  for (const task of tasks.filter((candidate) => !candidate.completed && candidate.dueDate && candidate.dueDate <= today && !notified.has(candidate.id))) {
+    try { new Notification(`Due: ${task.title}`, { body: task.dueDate === today ? "Due today" : `Overdue · ${task.dueDate}`, tag: `zenith-task-${task.id}` }); notified.add(task.id); } catch {}
+  }
+  try { localStorage.setItem(storageKey, JSON.stringify([...notified])); } catch {}
+}
+async function loadNotificationStatus() { updateNotificationUI(); }
 function render() {
   const all = state.tasks; const visible = all.filter((task) => state.showCompleted || !task.completed);
   const open = all.filter((task) => !task.completed); $("#openCount").textContent = open.length; $("#todayCount").textContent = open.filter((task) => isToday(task.dueDate)).length; $("#doneCount").textContent = all.filter((task) => task.completed).length;
@@ -16,7 +35,7 @@ function render() {
     toggle.addEventListener("change", () => update(task.id, { completed: toggle.checked })); item.querySelector(".edit").addEventListener("click", () => openEditor(task)); item.querySelector(".delete").addEventListener("click", () => remove(task.id)); list.append(item);
   }
 }
-async function loadTasks() { const { tasks } = await api("/api/tasks"); state.tasks = tasks; render(); $("#logout").hidden = false; $("#unloadModel").hidden = !assistantModel; }
+async function loadTasks() { const { tasks } = await api("/api/tasks"); state.tasks = tasks; render(); notifyDueTasks(tasks); $("#logout").hidden = false; $("#unloadModel").hidden = !assistantModel; }
 function closeLiveUpdates() { if (liveEvents) { liveEvents.close(); liveEvents = null; } }
 function connectLiveUpdates() {
   closeLiveUpdates();
@@ -103,13 +122,15 @@ $("#showCompleted").addEventListener("click", (event) => { state.showCompleted =
 $("#connectCalendar").addEventListener("click", () => { window.location.href = "/api/calendar/connect"; });
 $("#disconnectCalendar").addEventListener("click", async () => { try { await api("/api/calendar/connection", { method: "DELETE" }); await loadCalendar(); } catch (error) { $("#calendarError").textContent = error.message; } });
 $("#voiceButton").addEventListener("click", toggleVoiceRecording);
+$("#enableNotifications").addEventListener("click", async () => { const button = $("#enableNotifications"); button.disabled = true; try { await Notification.requestPermission(); updateNotificationUI(); notifyDueTasks(state.tasks); } finally { button.disabled = false; } });
 $("#today").textContent = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(new Date());
+setInterval(() => notifyDueTasks(state.tasks), 60000);
 api("/api/assistant/status").then(({ reachable, model }) => { $("#assistantStatus").textContent = reachable ? `Local assistant ready${model ? ` · ${model}` : ""}` : "Local assistant offline · tasks stay available"; }).catch(() => { $("#assistantStatus").textContent = "Local assistant unavailable"; });
 api("/api/assistant/status").then(({ model }) => { assistantModel = model; if (state.user && model) $("#unloadModel").hidden = false; });
 function showAuth(setupRequired) { $("#authPanel").hidden = false; $("#manager").hidden = true; $("#authEyebrow").textContent = setupRequired ? "WELCOME TO ZENITH" : "WELCOME BACK"; $("#authTitle").textContent = setupRequired ? "Set up your local account." : "Sign in to Zenith."; $("#authIntro").textContent = setupRequired ? "Choose a passphrase. It stays local and protects access to your tasks." : "Use your local account to continue."; $("#authSubmit").textContent = setupRequired ? "Create account" : "Sign in"; $("#authForm").dataset.mode = setupRequired ? "setup" : "login"; $("#password").autocomplete = setupRequired ? "new-password" : "current-password"; }
-$("#authForm").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const mode = event.currentTarget.dataset.mode; $("#authError").textContent = ""; try { const session = await api(mode === "setup" ? "/api/auth/setup" : "/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); state.user = session.user; $("#authPanel").hidden = true; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadVoiceStatus(); } catch (error) { $("#authError").textContent = error.message; } });
+$("#authForm").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const mode = event.currentTarget.dataset.mode; $("#authError").textContent = ""; try { const session = await api(mode === "setup" ? "/api/auth/setup" : "/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); state.user = session.user; $("#authPanel").hidden = true; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadVoiceStatus(); await loadNotificationStatus(); } catch (error) { $("#authError").textContent = error.message; } });
 $("#logout").addEventListener("click", async () => { closeLiveUpdates(); await api("/api/auth/session", { method: "DELETE" }); state.user = null; state.tasks = []; $("#logout").hidden = true; $("#unloadModel").hidden = true; showAuth(false); $("#password").value = ""; });
 $("#unloadModel").addEventListener("click", async () => { const button = $("#unloadModel"); button.disabled = true; try { const result = await api("/api/assistant/unload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); $("#assistantStatus").textContent = result.unloaded ? "Local assistant released · VRAM available" : "Local assistant is not loaded"; } catch (error) { $("#assistantStatus").textContent = error.message; } finally { button.disabled = false; } });
 $("#assistantForm").addEventListener("submit", async (event) => { event.preventDefault(); const input = $("#assistantInput"); const message = input.value.trim(); if (!message) return; const chat = $("#assistantChat"); const userMessage = document.createElement("p"); userMessage.className = "assistant-message user-message"; userMessage.textContent = message; chat.append(userMessage); input.value = ""; $("#assistantError").textContent = "Thinking…"; try { const result = await api("/api/assistant/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history: state.assistantHistory }) }); const answer = document.createElement("p"); answer.className = "assistant-message"; answer.textContent = result.message; chat.append(answer); addSpeechControl(chat, result.message); addActionProposal(result.actions); state.assistantHistory.push({ role: "user", content: message }, { role: "assistant", content: result.message }); $("#assistantError").textContent = result.model ? `Using ${result.model}` : ""; chat.scrollTop = chat.scrollHeight; } catch (error) { $("#assistantError").textContent = error.message === "Local assistant is unavailable." ? "Ollama is offline. Your tasks are still available." : error.message; } });
-async function start() { const existing = await fetch("/api/auth/session"); if (existing.ok) { const session = await existing.json(); state.user = session.user; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadVoiceStatus(); return; } const { setupRequired } = await api("/api/auth/status"); showAuth(setupRequired); }
+async function start() { const existing = await fetch("/api/auth/session"); if (existing.ok) { const session = await existing.json(); state.user = session.user; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadVoiceStatus(); await loadNotificationStatus(); return; } const { setupRequired } = await api("/api/auth/status"); showAuth(setupRequired); }
 start().catch((error) => { showAuth(false); $("#authError").textContent = error.message; });

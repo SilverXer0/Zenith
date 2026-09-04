@@ -77,3 +77,7 @@ $env:ZENITH_TTS_ARGS='["scripts\pyttsx3-speak.py","{text}","{output}"]'
 ```
 
 Assistant replies show a `Speak reply` control when text-to-speech is configured. Audio is generated on demand and is not stored by Zenith.
+
+### Local task reminders
+
+When Zenith is open in a supported secure browser context, choose `Enable reminders` to allow browser notifications for open tasks due today or overdue. Each task is announced at most once per browser per day, and the reminder content stays on that device. This browser-local layer requires Zenith to remain open; background notifications while it is closed will need a later push-notification service.
