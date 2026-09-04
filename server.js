@@ -194,6 +194,15 @@ async function listCalendarEvents(userId, range) {
   const fetchEvents = () => { const endpoint = new URL(googleCalendarUrl("/calendars/primary/events")); endpoint.searchParams.set("singleEvents", "true"); endpoint.searchParams.set("orderBy", "startTime"); endpoint.searchParams.set("timeMin", range.start.toISOString()); endpoint.searchParams.set("timeMax", range.end.toISOString()); endpoint.searchParams.set("maxResults", "100"); return remoteJson(endpoint, { headers: { Authorization: `Bearer ${accessToken}` } }); };
   try { return (await fetchEvents()).items?.map(calendarEventFromGoogle) || []; } catch (error) { if (error.status !== 401) throw error; accessToken = await calendarAccessToken(userId, true); return (await fetchEvents()).items?.map(calendarEventFromGoogle) || []; }
 }
+async function assistantCalendarContext(userId) {
+  if (!googleConfigured()) return "Google Calendar is not configured.";
+  if (!await calendarAccount(userId)) return "Google Calendar is not connected.";
+  try {
+    const events = await listCalendarEvents(userId, calendarRange(new URL("http://localhost")));
+    if (!events.length) return "No upcoming Google Calendar events in the next seven days.";
+    return events.slice(0, 50).map((event) => `- ${event.title} | ${event.start || "time unavailable"}${event.end ? ` to ${event.end}` : ""}${event.location ? ` | ${event.location}` : ""}`).join("\n");
+  } catch { return "Google Calendar is connected but temporarily unavailable."; }
+}
 async function completeCalendarCallback(url, response) {
   const state = url.searchParams.get("state"); const code = url.searchParams.get("code");
   if (!state || !code) return send(response, 400, { error: "Google Calendar authorization was incomplete." });
@@ -219,11 +228,12 @@ async function assistantChat(userId, input) {
   if (message.length > 4000) throw new Error("Keep assistant messages under 4,000 characters.");
   const rows = await runSql(`SELECT title,notes,project,priority,due_date AS dueDate,completed FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC LIMIT 100`, true);
   const context = rows.length ? rows.map((task, index) => `${index + 1}. (${task.id}) [${task.completed ? "done" : "open"}] ${task.title} — ${task.project}, ${task.priority} priority${task.dueDate ? `, due ${task.dueDate}` : ""}${task.notes ? ` — ${task.notes.slice(0, 500)}` : ""}`).join("\n") : "No tasks are currently saved.";
+  const calendarContext = await assistantCalendarContext(userId);
   const history = Array.isArray(input.history) ? input.history.filter((item) => ["user", "assistant"].includes(item?.role) && typeof item.content === "string").slice(-8).map((item) => ({ role: item.role, content: item.content.slice(0, 2000) })) : [];
   let model = process.env.OLLAMA_MODEL || null;
   if (!model) { const tags = await ollamaJson("/api/tags", { timeout: 1500 }); model = tags.models?.[0]?.name || null; }
   if (!model) throw new Error("No Ollama model is available.");
-  const result = await ollamaJson("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 30000, body: JSON.stringify({ model, stream: false, format: "json", keep_alive: process.env.OLLAMA_KEEP_ALIVE || "5m", messages: [{ role: "system", content: `You are Zenith, a calm local personal manager. Use the user's task list below. Return one valid JSON object with exactly these keys: reply (a concise helpful string) and actions (an array). Actions are proposals only and are never applied automatically. Use create_task with title, optional notes/project/priority/dueDate; update_task with taskId and optional fields; complete_task with taskId; or delete_task with taskId. Only use task IDs from the list. If no change is requested, return an empty actions array.\n\nUser task list:\n${context}` }, ...history, { role: "user", content: message }] }) });
+  const result = await ollamaJson("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 30000, body: JSON.stringify({ model, stream: false, format: "json", keep_alive: process.env.OLLAMA_KEEP_ALIVE || "5m", messages: [{ role: "system", content: `You are Zenith, a calm local personal manager. Use the user's task list and calendar context below. Never invent calendar events; if calendar context says it is unavailable, say that when relevant. Return one valid JSON object with exactly these keys: reply (a concise helpful string) and actions (an array). Actions are proposals only and are never applied automatically. Use create_task with title, optional notes/project/priority/dueDate; update_task with taskId and optional fields; complete_task with taskId; or delete_task with taskId. Only use task IDs from the list. If no change is requested, return an empty actions array.\n\nUser task list:\n${context}\n\nGoogle Calendar context:\n${calendarContext}` }, ...history, { role: "user", content: message }] }) });
   const content = result.message?.content?.trim();
   if (!content) throw new Error("Ollama returned an empty response.");
   let parsed; try { parsed = JSON.parse(content); } catch { parsed = { reply: content, actions: [] }; }

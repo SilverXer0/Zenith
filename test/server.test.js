@@ -162,9 +162,6 @@ test("Zenith API integration", async () => {
   assert.equal(calendarConnected.body.calendarName, "Personal Calendar");
   const calendarEvents = await request("/api/calendar/events?start=2026-09-04T00:00:00Z&end=2026-09-05T00:00:00Z", { headers: { Cookie: reLoginCookie } });
   assert.deepEqual(calendarEvents.body.events, [{ id: "event-1", title: "Focus time", start: "2026-09-04T18:00:00-07:00", end: "2026-09-04T19:00:00-07:00", allDay: false, location: "Home", status: "confirmed" }]);
-  const disconnected = await request("/api/calendar/connection", { method: "DELETE", headers: { Cookie: reLoginCookie } });
-  assert.equal(disconnected.response.status, 204);
-
   const unauthenticatedEvents = await request("/api/events");
   assert.equal(unauthenticatedEvents.response.status, 401);
   const eventStream = await openEventStream(reLoginCookie);
@@ -198,6 +195,7 @@ test("Zenith API integration", async () => {
   assert.equal(assistant.body.message, "Focus on the private task first.");
   assert.equal(assistant.body.actions.length, 1);
   assert.match(receivedChat.messages[0].content, /private task/i);
+  assert.match(receivedChat.messages[0].content, /Focus time/i);
   assert.equal(receivedChat.messages.at(-1).content, "What should I focus on?");
   const invalidAction = await request("/api/assistant/actions", jsonOptions("POST", { actions: [{ type: "delete_task", taskId: "not-your-task" }] }, reLoginCookie));
   assert.equal(invalidAction.response.status, 409);
@@ -213,6 +211,8 @@ test("Zenith API integration", async () => {
   const tasksAfterUnload = await request("/api/tasks", { headers: { Cookie: reLoginCookie } });
   assert.equal(tasksAfterUnload.response.status, 200);
   assert.equal(tasksAfterUnload.body.tasks.length, 3);
+  const disconnected = await request("/api/calendar/connection", { method: "DELETE", headers: { Cookie: reLoginCookie } });
+  assert.equal(disconnected.response.status, 204);
 
   const logout = await request("/api/auth/session", { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(logout.response.status, 204);
