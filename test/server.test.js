@@ -89,6 +89,7 @@ test("Zenith API integration", async () => {
   const page = await request("/", { raw: true });
   assert.match(page.body, /Capture to Inbox/);
   assert.match(page.body, /Add project, priority, date, or notes/);
+  assert.match(page.body, /Speak/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
   assert.match(serviceWorker.body, /api/);
@@ -137,6 +138,17 @@ test("Zenith API integration", async () => {
   assert.equal(previousDeviceSession.response.status, 200);
   const reloadedTasks = await request("/api/tasks", { headers: { Cookie: reLoginCookie } });
   assert.equal(reloadedTasks.body.tasks.length, 2);
+
+  const voiceUnconfiguredStatus = await request("/api/voice/status", { headers: { Cookie: reLoginCookie } });
+  assert.deepEqual(voiceUnconfiguredStatus.body, { configured: false });
+  const voiceUnconfigured = await request("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/webm", Cookie: reLoginCookie }, body: "test audio" });
+  assert.equal(voiceUnconfigured.response.status, 409);
+  process.env.ZENITH_STT_COMMAND = process.execPath;
+  process.env.ZENITH_STT_ARGS = JSON.stringify(["-e", "console.log('local transcript')", "{input}"]);
+  const voiceConfiguredStatus = await request("/api/voice/status", { headers: { Cookie: reLoginCookie } });
+  assert.deepEqual(voiceConfiguredStatus.body, { configured: true });
+  const transcribed = await request("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/webm", Cookie: reLoginCookie }, body: "test audio" });
+  assert.deepEqual(transcribed.body, { text: "local transcript" });
 
   const calendarUnconfigured = await request("/api/calendar/status", { headers: { Cookie: reLoginCookie } });
   assert.deepEqual(calendarUnconfigured.body, { configured: false, connected: false, calendarName: null, connectedAt: null });
@@ -249,4 +261,6 @@ test("Zenith API integration", async () => {
   delete process.env.GOOGLE_REDIRECT_URI;
   delete process.env.GOOGLE_TOKEN_URL;
   delete process.env.GOOGLE_CALENDAR_URL;
+  delete process.env.ZENITH_STT_COMMAND;
+  delete process.env.ZENITH_STT_ARGS;
 });

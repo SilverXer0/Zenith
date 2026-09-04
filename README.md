@@ -34,6 +34,8 @@ To use private HTTPS on the Windows home server, run `scripts\start-zenith-tails
 - `GET /api/calendar/oauth/callback` (Google OAuth callback)
 - `GET /api/calendar/events` (authenticated, read-only upcoming events)
 - `DELETE /api/calendar/connection`
+- `GET /api/voice/status`
+- `POST /api/voice/transcribe` (authenticated, optional local speech-to-text)
 - `GET /api/assistant/status`
 - `POST /api/assistant/chat` (authenticated, read-only task context)
 - `POST /api/assistant/actions` (authenticated, applies user-confirmed proposals)
@@ -54,3 +56,14 @@ The local tool displays the existing account name, asks for an explicit `RESET` 
 ### Google Calendar
 
 Calendar is optional. To enable it, create a Google Cloud OAuth web application with the Google Calendar API enabled, then set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` on the Windows Zenith server. `GOOGLE_REDIRECT_URI` can be set when the callback must use a specific address; otherwise the local callback defaults to `http://127.0.0.1:3000/api/calendar/oauth/callback`, so start authorization from the Windows PC. Keep the client secret outside the repository. Zenith requests the read-only Calendar scope, stores the connection in SQLite, refreshes access tokens as needed, and exposes only upcoming event details to the UI. If these settings are absent, tasks and the rest of Zenith continue working normally.
+
+### Local voice input
+
+Voice input is optional and stays on the Zenith server. The included `scripts\whisper-transcribe.py` adapter uses `faster-whisper`; it accepts the browser's audio file and prints only the transcript. The server invokes an external command using `ZENITH_STT_COMMAND` and a JSON array in `ZENITH_STT_ARGS`; the array must contain `{input}` where the temporary recording path should be inserted. For the included adapter on Windows, create a Python virtual environment, install `faster-whisper`, then set:
+
+```powershell
+$env:ZENITH_STT_COMMAND=".venv\Scripts\python.exe"
+$env:ZENITH_STT_ARGS='["scripts\whisper-transcribe.py","{input}"]'
+```
+
+The adapter defaults to the `base.en` model on CUDA with FP16. Set `ZENITH_WHISPER_MODEL`, `ZENITH_WHISPER_DEVICE`, `ZENITH_WHISPER_COMPUTE_TYPE`, or `ZENITH_WHISPER_LANGUAGE` to adjust it. The first transcription downloads the selected model; subsequent transcription is local. `faster-whisper` supports GPU execution with `device="cuda"` and `compute_type="float16"`; its current Windows GPU requirements are documented in the project's [official README](https://github.com/SYSTRAN/faster-whisper#requirements).

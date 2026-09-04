@@ -1,11 +1,12 @@
 import { createServer, request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { dirname, extname, join, normalize } from "node:path";
+import { tmpdir } from "node:os";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
@@ -72,6 +73,7 @@ function send(response, status, payload, headers = {}) {
   response.end(status === 204 ? "" : JSON.stringify(payload));
 }
 async function body(request) { let raw = ""; for await (const chunk of request) raw += chunk; try { return JSON.parse(raw || "{}"); } catch { throw new Error("Please send valid JSON."); } }
+async function rawBody(request, limit = 15 * 1024 * 1024) { const chunks = []; let size = 0; for await (const chunk of request) { size += chunk.length; if (size > limit) { const error = new Error("Voice recordings must be 15 MB or smaller."); error.code = "PAYLOAD_TOO_LARGE"; throw error; } chunks.push(chunk); } return Buffer.concat(chunks); }
 function taskInput(input, existing = {}) {
   const title = (input.title ?? existing.title ?? "").trim();
   if (!title) throw new Error("A task needs a title.");
@@ -152,6 +154,26 @@ async function ollamaJson(path, options = {}) {
 async function remoteJson(target, options = {}) {
   const url = new URL(target); const transport = url.protocol === "https:" ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => { const request = transport(url, { method: options.method || "GET", headers: options.headers || {} }, (response) => { let raw = ""; response.setEncoding("utf8"); response.on("data", (chunk) => { raw += chunk; }); response.on("end", () => { let parsed = {}; try { parsed = raw ? JSON.parse(raw) : {}; } catch { const error = new Error("Remote service returned invalid JSON."); error.status = response.statusCode; return reject(error); } if (response.statusCode < 200 || response.statusCode >= 300) { const error = new Error(`Remote service returned ${response.statusCode}.`); error.status = response.statusCode; error.body = parsed; return reject(error); } resolve(parsed); }); }); request.setTimeout(options.timeout || 10000, () => request.destroy(new Error("Remote service request timed out."))); request.on("error", reject); if (options.body) request.write(options.body); request.end(); });
+}
+function typedError(message, code) { const error = new Error(message); error.code = code; return error; }
+function voiceConfigured() { return Boolean(process.env.ZENITH_STT_COMMAND && process.env.ZENITH_STT_ARGS); }
+async function transcribeAudio(audio) {
+  if (!voiceConfigured()) throw typedError("Local speech-to-text is not configured.", "VOICE_NOT_CONFIGURED");
+  let args;
+  try { args = JSON.parse(process.env.ZENITH_STT_ARGS); } catch { throw typedError("Local speech-to-text configuration is invalid.", "VOICE_BAD_CONFIG"); }
+  if (!Array.isArray(args) || !args.includes("{input}")) throw typedError("ZENITH_STT_ARGS must be a JSON array containing the {input} placeholder.", "VOICE_BAD_CONFIG");
+  const inputFile = join(tmpdir(), `zenith-voice-${randomUUID()}.webm`);
+  await writeFile(inputFile, audio);
+  try {
+    const commandArgs = args.map((arg) => String(arg).replaceAll("{input}", inputFile));
+    const { stdout } = await execFileAsync(process.env.ZENITH_STT_COMMAND, commandArgs, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+    const text = stdout.trim();
+    if (!text) throw typedError("Local speech-to-text returned no text.", "VOICE_EMPTY");
+    return text.slice(0, 4000);
+  } catch (error) {
+    if (error.code?.startsWith("VOICE_")) throw error;
+    throw typedError("Local speech-to-text could not transcribe that recording.", "VOICE_FAILED");
+  } finally { await unlink(inputFile).catch(() => {}); }
 }
 const calendarScope = "https://www.googleapis.com/auth/calendar.readonly";
 function googleConfigured() { return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET); }
@@ -307,6 +329,19 @@ async function api(request, response, url) {
     }
   }
   if (request.method === "DELETE" && path === "/api/calendar/connection") { await runSql(`DELETE FROM calendar_accounts WHERE user_id=${sqlQuote(user.id)}; DELETE FROM calendar_oauth_states WHERE user_id=${sqlQuote(user.id)}`); return send(response, 204, {}); }
+  if (request.method === "GET" && path === "/api/voice/status") return send(response, 200, { configured: voiceConfigured() });
+  if (request.method === "POST" && path === "/api/voice/transcribe") {
+    try {
+      const audio = await rawBody(request);
+      if (!audio.length) throw typedError("Voice recording was empty.", "VOICE_EMPTY");
+      return send(response, 200, { text: await transcribeAudio(audio) });
+    } catch (error) {
+      if (error.code === "PAYLOAD_TOO_LARGE") return send(response, 413, { error: error.message });
+      if (["VOICE_NOT_CONFIGURED", "VOICE_BAD_CONFIG"].includes(error.code)) return send(response, 409, { error: error.message });
+      if (error.code === "VOICE_EMPTY") return send(response, 400, { error: error.message });
+      return send(response, 503, { error: error.message || "Local speech-to-text is unavailable." });
+    }
+  }
   if (request.method === "GET" && path === "/api/events") {
     response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
     response.write("event: ready\ndata: {}\n\n");
