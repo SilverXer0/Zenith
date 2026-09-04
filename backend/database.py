@@ -28,9 +28,14 @@ SCHEMA = (
     """CREATE TABLE IF NOT EXISTS task_completion_events (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         task_id TEXT NOT NULL, title TEXT NOT NULL, completed_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS memory_items (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
     "CREATE INDEX IF NOT EXISTS tasks_user_updated ON tasks(user_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at)",
     "CREATE INDEX IF NOT EXISTS task_completion_user_time ON task_completion_events(user_id, completed_at)",
+    "CREATE INDEX IF NOT EXISTS memory_user_updated ON memory_items(user_id, updated_at)",
 )
 
 
@@ -40,6 +45,11 @@ def task_from_row(row: sqlite3.Row) -> dict:
         "priority": row["priority"], "dueDate": row["due_date"], "completed": bool(row["completed"]),
         "completedAt": row["completed_at"], "createdAt": row["created_at"], "updatedAt": row["updated_at"],
     }
+
+
+def memory_from_row(row: sqlite3.Row) -> dict:
+    return {"id": row["id"], "category": row["category"], "content": row["content"],
+            "createdAt": row["created_at"], "updatedAt": row["updated_at"]}
 
 
 class Database:
@@ -107,9 +117,21 @@ class Database:
 
     def list_tasks(self, user_id: str) -> list[dict]:
         with self.connection() as connection:
-            rows = connection.execute("""SELECT * FROM tasks WHERE user_id = ?
-                ORDER BY completed, due_date IS NULL, due_date, updated_at DESC""", (user_id,))
-            return [task_from_row(row) for row in rows]
+            return self._list_tasks(connection, user_id)
+
+    def _list_tasks(self, connection, user_id: str) -> list[dict]:
+        rows = connection.execute("""SELECT * FROM tasks WHERE user_id = ?
+            ORDER BY completed, due_date IS NULL, due_date, updated_at DESC""", (user_id,))
+        return [task_from_row(row) for row in rows]
+
+    def summary_data(self, user_id: str, start: str, end: str) -> tuple[list[dict], list[dict]]:
+        # One read transaction keeps history and current tasks at the same snapshot.
+        with self.connection() as connection:
+            rows = connection.execute("""SELECT task_id AS taskId, title, completed_at AS completedAt
+                FROM task_completion_events WHERE user_id=? AND completed_at>=? AND completed_at<?
+                ORDER BY completed_at""", (user_id, start, end))
+            completed = [dict(row) for row in rows]
+            return self._list_tasks(connection, user_id), completed
 
     def save_task(self, user_id: str, patch: dict, task_id: str | None = None) -> dict:
         with self.connection(write=True) as connection:
@@ -155,3 +177,45 @@ class Database:
             result = connection.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id))
             if not result.rowcount:
                 raise ApiError(404, "Task not found.")
+
+    def list_memory(self, user_id: str) -> list[dict]:
+        with self.connection() as connection:
+            rows = connection.execute("SELECT * FROM memory_items WHERE user_id=? ORDER BY updated_at DESC", (user_id,))
+            return [memory_from_row(row) for row in rows]
+
+    def save_memory(self, user_id: str, patch: dict, memory_id: str | None = None) -> dict:
+        with self.connection(write=True) as connection:
+            if memory_id:
+                row = connection.execute("SELECT * FROM memory_items WHERE id=? AND user_id=?", (memory_id, user_id)).fetchone()
+                if not row:
+                    raise ApiError(404, "Context note not found.")
+                memory = memory_from_row(row)
+            else:
+                memory = {"id": str(uuid4()), "content": "", "category": "general", "createdAt": timestamp()}
+            for key in ("content", "category"):
+                if patch.get(key) is not None:
+                    memory[key] = patch[key]
+            if not memory["content"]:
+                raise ApiError(400, "Context needs some text.")
+            memory["category"] = memory["category"] or "general"
+            memory["updatedAt"] = timestamp()
+            if memory_id:
+                connection.execute("""UPDATE memory_items SET category=?, content=?, updated_at=? WHERE id=? AND user_id=?""",
+                                   (memory["category"], memory["content"], memory["updatedAt"], memory_id, user_id))
+            else:
+                connection.execute("""INSERT INTO memory_items (id, user_id, category, content, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""", (memory["id"], user_id, memory["category"], memory["content"], memory["createdAt"], memory["updatedAt"]))
+            return memory
+
+    def delete_memory(self, user_id: str, memory_id: str):
+        with self.connection(write=True) as connection:
+            result = connection.execute("DELETE FROM memory_items WHERE id=? AND user_id=?", (memory_id, user_id))
+            if not result.rowcount:
+                raise ApiError(404, "Context note not found.")
+
+    def calendar_connected(self, user_id: str) -> bool:
+        with self.connection() as connection:
+            exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar_accounts'").fetchone()
+            if not exists:
+                return False
+            return connection.execute("SELECT 1 FROM calendar_accounts WHERE user_id=?", (user_id,)).fetchone() is not None

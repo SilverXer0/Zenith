@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -15,7 +15,8 @@ from .auth import Auth, COOKIE_NAME, SESSION_SECONDS, token_hash
 from .database import Database
 from .errors import ApiError
 from .events import TaskEvents, TaskEventResponse
-from .models import Credentials, TaskPatch
+from .models import Credentials, MemoryPatch, TaskPatch
+from .planning import Planning, planning_date, weekly_start
 
 
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
@@ -24,6 +25,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     database = Database(directory)
     auth = Auth(database)
     events = TaskEvents()
+    planning = Planning(database)
     secure_cookie = os.environ.get("ZENITH_COOKIE_SECURE", "").lower() in ("1", "true")
 
     @asynccontextmanager
@@ -62,7 +64,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.exception_handler(sqlite3.Error)
     async def database_error(request, error):
-        return JSONResponse({"error": "Task storage is temporarily unavailable."}, status_code=503)
+        return JSONResponse({"error": "Local storage is temporarily unavailable."}, status_code=503)
 
     def user(request: Request):
         return auth.current_user(request.cookies.get(COOKIE_NAME))
@@ -130,5 +132,39 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         database.delete_task(current_user["id"], task_id)
         events.publish(current_user["id"])
         return Response(status_code=204)
+
+    @app.get("/api/memory")
+    def memories(current_user: dict = Depends(user)):
+        return {"memories": database.list_memory(current_user["id"])}
+
+    @app.post("/api/memory", status_code=201)
+    def create_memory(patch: MemoryPatch, current_user: dict = Depends(user)):
+        return {"memory": database.save_memory(current_user["id"], patch.model_dump(exclude_unset=True))}
+
+    @app.patch("/api/memory/{memory_id}")
+    def update_memory(memory_id: str, patch: MemoryPatch, current_user: dict = Depends(user)):
+        return {"memory": database.save_memory(current_user["id"], patch.model_dump(exclude_unset=True), memory_id)}
+
+    @app.delete("/api/memory/{memory_id}", status_code=204)
+    def delete_memory(memory_id: str, current_user: dict = Depends(user)):
+        database.delete_memory(current_user["id"], memory_id)
+        return Response(status_code=204)
+
+    @app.get("/api/briefing")
+    def briefing(day: str | None = Query(default=None, alias="date"), current_user: dict = Depends(user)):
+        return planning.briefing(current_user["id"], planning_date(day))
+
+    @app.get("/api/briefing/morning")
+    def morning_briefing(day: str | None = Query(default=None, alias="date"), current_user: dict = Depends(user)):
+        return planning.morning(current_user["id"], planning_date(day))
+
+    @app.get("/api/weekly-plan")
+    def weekly_plan(start: str | None = None, current_user: dict = Depends(user)):
+        return planning.weekly(current_user["id"], weekly_start(start))
+
+    @app.get("/api/summaries/daily")
+    def daily_summary(day: str | None = Query(default=None, alias="date"),
+                      offset: int = Query(default=0, ge=-840, le=840), current_user: dict = Depends(user)):
+        return planning.daily_summary(current_user["id"], planning_date(day), offset)
 
     return app

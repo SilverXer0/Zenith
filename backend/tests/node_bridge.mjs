@@ -44,12 +44,20 @@ try {
     assert.equal(session.status, 200, "Node must accept the Python session cookie");
     const tasks = await api("/api/tasks", { cookie });
     const memory = await api("/api/memory", { cookie });
-    const date = new Date().toISOString().slice(0, 10);
-    const summary = await api(`/api/summaries/daily?date=${date}&offset=0`, { cookie });
+    const date = process.env.ZENITH_TEST_DATE || new Date().toISOString().slice(0, 10);
+    const offset = process.env.ZENITH_TEST_OFFSET || "0";
+    const summary = await api(`/api/summaries/daily?date=${encodeURIComponent(date)}&offset=${encodeURIComponent(offset)}`, { cookie });
+    const briefing = await api(`/api/briefing?date=${encodeURIComponent(date)}`, { cookie });
+    const morning = await api(`/api/briefing/morning?date=${encodeURIComponent(date)}`, { cookie });
+    const weekly = await api(`/api/weekly-plan?start=${encodeURIComponent(date)}`, { cookie });
     assert.equal(tasks.status, 200);
     assert.equal(memory.status, 200);
     assert.equal(summary.status, 200);
-    console.log(JSON.stringify({ tasks: tasks.body.tasks, memories: memory.body.memories, summary: summary.body }));
+    assert.equal(briefing.status, 200);
+    assert.equal(morning.status, 200);
+    assert.equal(weekly.status, 200);
+    console.log(JSON.stringify({ tasks: tasks.body.tasks, memories: memory.body.memories, summary: summary.body,
+      briefing: briefing.body, morning: morning.body, weekly: weekly.body }));
   } else {
     throw new Error("Expected seed or read mode");
   }

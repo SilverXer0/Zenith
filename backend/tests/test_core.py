@@ -221,6 +221,7 @@ class MigrationTests(unittest.TestCase):
             client.cookies.set(COOKIE_NAME, seeded["cookie"].split("=", 1)[1])
             self.assertEqual(client.get("/api/auth/session").json()["user"], seeded["user"])
             self.assertEqual(client.get("/api/tasks").json()["tasks"], [seeded["task"]])
+            self.assertEqual(client.get("/api/memory").json()["memories"], [seeded["memory"]])
             login = client.post("/api/auth/session", json=CREDENTIALS)
             self.assertEqual(login.status_code, 201)
             task_id = seeded["task"]["id"]
@@ -228,10 +229,14 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(updated["createdAt"], seeded["task"]["createdAt"])
             self.assertEqual(updated["completedAt"], seeded["task"]["completedAt"])
             self.assertEqual(client.post("/api/tasks", json={"title": "Python-created task", "completed": True}).status_code, 201)
+            memory = client.patch(f'/api/memory/{seeded["memory"]["id"]}', json={"content": "Edited context in Python"})
+            self.assertEqual(memory.status_code, 200)
+            updated_memory = memory.json()["memory"]
+            self.assertEqual(updated_memory["createdAt"], seeded["memory"]["createdAt"])
             cookie = login.cookies[COOKIE_NAME]
         returned = self.node("read", cookie)
         self.assertEqual({task["title"] for task in returned["tasks"]}, {"Edited in Python", "Python-created task"})
-        self.assertEqual(returned["memories"], [seeded["memory"]])
+        self.assertEqual(returned["memories"], [updated_memory])
         self.assertEqual(returned["summary"]["counts"]["completed"], 2)
 
     def test_python_created_password_and_session_are_accepted_by_node(self):

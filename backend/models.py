@@ -41,3 +41,14 @@ class TaskPatch(BaseModel):
             raise ValueError("Use a due date in YYYY-MM-DD format.")
         date.fromisoformat(value)
         return value
+
+
+class MemoryPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    content: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=40)
+
+    @field_validator("content", "category")
+    @classmethod
+    def trim_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None

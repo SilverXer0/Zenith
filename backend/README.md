@@ -7,13 +7,27 @@ This is the first executable step toward Zenith's planned **Python/FastAPI backe
 - Health and local account setup/sign-in/sign-out/session APIs.
 - Authenticated, per-user task CRUD with the existing camel-case response format.
 - Authenticated live task events, with per-user isolation and session-aware stream cleanup.
+- User-managed persistent context CRUD, stored per account.
+- Read-only daily focus, morning task view, seven-day plan, and completion-summary APIs.
 - SQLite through Python's standard library, without the external SQLite CLI.
 - Compatibility with the existing SQLite file, Node scrypt passphrases and hashed session tokens.
 - One-time legacy `tasks.json` import and upgrades of older user/task tables.
 - Atomic task writes and completion-event recording; concurrent completions record one transition.
 - Same-origin write checks, HttpOnly/SameSite cookies, optional Secure cookies, and uncached API responses.
 
-Core startup and task operations neither connect to nor load Ollama. This development backend does **not** yet implement assistant, calendar, memory, planning, summary, or voice endpoints. It does not serve the current UI. These are missing capabilities, not disabled implementations or feature parity.
+Core startup, context and planning operations neither connect to nor load Ollama. This development backend does **not** yet implement assistant, Google Calendar event access/OAuth, or voice endpoints. It does not serve the current UI. These are missing capabilities, not disabled implementations or feature parity.
+
+## Context and task planning contract
+
+The authenticated context routes match the Node API: `GET/POST /api/memory` and `PATCH/DELETE /api/memory/{id}`. Notes are scoped to their owner, retain their ID and creation time across edits/restarts, and are never created automatically. Content is limited to 2,000 characters and categories to 40. Context changes do not emit `tasks_changed`; the future frontend must refresh that separate resource after context writes.
+
+The read-only planning routes are `GET /api/briefing`, `GET /api/briefing/morning`, `GET /api/weekly-plan`, and `GET /api/summaries/daily`. They preserve the prototype response shapes and deterministic ordering. Daily focus prefers overdue tasks, then today's tasks, dates and priorities, with recent updates breaking ties. Morning includes overdue, due-today and the next three days. Weekly planning returns seven calendar dates plus undated tasks. Completed tasks are excluded from open-task projections.
+
+Daily summaries use recorded completion events, so reopening, renaming or deleting the current task cannot rewrite what was completed. Start boundaries are inclusive and end boundaries exclusive. Current open/created counts are a current task snapshot; they are not a reconstructed historical end-of-day state. The history and task snapshot are read in one SQLite transaction.
+
+Clients should pass a real `YYYY-MM-DD` date. If omitted, UTC today is used for compatibility; the current browser supplies its local date. Daily summary's `offset` is a whole number from -840 to 840 and follows `Date.getTimezoneOffset()` (positive west of UTC). This fixed 24-hour compatibility window is not a complete timezone/DST model. IANA-timezone and calendar-aware scheduling remain later planning gates.
+
+Until the Calendar port lands, morning/weekly responses report preserved account state honestly: `connected` reflects a retained account row, while `available` is false and `events` is empty. No Google request is attempted. That is a deliberate migration boundary, not successful Calendar integration.
 
 ## Live task event contract
 
@@ -67,8 +81,8 @@ Task input is intentionally stricter than the prototype: dates must be real `YYY
 
 ## Verification and remaining gates
 
-The Python suite covers actual FastAPI requests, server startup, independent sessions, expiry, user isolation, validation, transactions, concurrency, restart persistence, legacy JSON, old SQLite schemas, and real Node → Python → Node compatibility. The live-event tests use real HTTP streams against temporary Uvicorn servers, verifying task changes across two sessions, user isolation, failed-write silence, reconnect snapshots, and logout/expiry/revocation. Separate broker/ASGI tests cover 10,000-change bursts, heartbeat checks, blocked sends, cancellation and cleanup. All fixtures use disposable directories; real task data is not part of the tests. It also checks that pre-existing context and calendar-table data are not removed by migration. The Node suite remains `npm test`.
+The Python suite covers actual FastAPI requests, server startup, independent sessions, expiry, user isolation, validation, transactions, concurrency, restart persistence, legacy JSON, old SQLite schemas, and real Node → Python → Node compatibility. The live-event tests use real HTTP streams against temporary Uvicorn servers, verifying task changes across two sessions, user isolation, failed-write silence, reconnect snapshots, and logout/expiry/revocation. Separate broker/ASGI tests cover 10,000-change bursts, heartbeat checks, blocked sends, cancellation and cleanup. Context/planning tests cover CRUD, account isolation, restart persistence, ordering, failed-write rollback, date/offset boundaries, completion-history retention, calendar-unavailable state, read-only operation without Ollama, and exact Node API comparisons. All fixtures use disposable directories; real task data is not part of the tests. It also checks that pre-existing context and calendar-table data are not removed by migration. The Node suite remains `npm test`.
 
-These checks do not prove a complete browser UI against Python, Windows packaging, real Tailscale access, actual Google OAuth, real Qwen inference, microphone/speaker operation, or full API parity. The next migration gate is the remaining existing API surfaces, followed by the responsive Next.js/TypeScript/Tailwind frontend. See [the migration plan](../docs/architecture-migration.md) for the full scope.
+These checks do not prove a complete browser UI against Python, Windows packaging, real Tailscale access, actual Google OAuth/Calendar reads, real Qwen inference, microphone/speaker operation, timezone-aware schedule planning, or full API parity. The next migration gates are optional-service API parity and then the responsive Next.js/TypeScript/Tailwind frontend. See [the migration plan](../docs/architecture-migration.md) for the full scope.
 
 Implementation references: [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/), [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/), [SSE and the browser event contract](https://fastapi.tiangolo.com/tutorial/server-sent-events/), and [Python SQLite transactions](https://docs.python.org/3/library/sqlite3.html).
