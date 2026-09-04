@@ -3,6 +3,7 @@ let assistantModel = null;
 let liveEvents = null;
 const $ = (selector) => document.querySelector(selector);
 const api = async (path, options) => { const response = await fetch(path, options); if (!response.ok && response.status !== 204) throw new Error((await response.json()).error); return response.status === 204 ? null : response.json(); };
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 function isToday(date) { return date === new Date().toISOString().slice(0, 10); }
 function formatDue(date) { if (!date) return "No due date"; return isToday(date) ? "Due today" : `Due ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(`${date}T12:00:00`))}`; }

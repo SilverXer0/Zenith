@@ -31,7 +31,7 @@ async function request(path, options = {}) {
       let raw = "";
       response.setEncoding("utf8");
       response.on("data", (chunk) => { raw += chunk; });
-      response.on("end", () => resolve({ response: { status: response.statusCode, headers: response.headers }, body: raw ? JSON.parse(raw) : null }));
+      response.on("end", () => resolve({ response: { status: response.statusCode, headers: response.headers }, body: options.raw ? raw : (raw ? JSON.parse(raw) : null) }));
     });
     request.on("error", reject);
     if (options.body) request.write(options.body);
@@ -82,6 +82,13 @@ test("Zenith API integration", async () => {
   const { response, body } = await request("/api/health");
   assert.equal(response.status, 200);
   assert.deepEqual(body, { ok: true, service: "zenith", storage: "sqlite" });
+  const manifest = await request("/manifest.webmanifest");
+  assert.equal(manifest.response.status, 200);
+  assert.equal(manifest.body.display, "standalone");
+  assert.equal(manifest.body.start_url, "/");
+  const serviceWorker = await request("/sw.js", { raw: true });
+  assert.equal(serviceWorker.response.status, 200);
+  assert.match(serviceWorker.body, /api/);
 
   const unauthenticated = await request("/api/tasks");
   const { response: unauthenticatedResponse, body: unauthenticatedBody } = unauthenticated;

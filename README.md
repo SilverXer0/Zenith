@@ -16,6 +16,10 @@ Open http://localhost:3000. Tasks persist in `data/zenith.sqlite` (or `ZENITH_DA
 
 For the intended Windows home-server setup, install Tailscale on the Windows PC and each device that should access Zenith, then sign in to the same private tailnet. From PowerShell in the Zenith folder, run `scripts\start-zenith-tailscale.ps1`. The helper binds Zenith to the PC's Tailscale address and prints the private URL to open on your Mac or phone. This keeps Zenith off the public internet; do not port-forward port 3000. `ZENITH_HOST` can also be set manually when you need a different bind address.
 
+### PWA installation
+
+Zenith includes a web-app manifest and service worker. The static app shell can be installed as a PWA when served from a secure context. `http://localhost:3000` is suitable for local browser testing; a raw `http://100.x.x.x:3000` Tailscale address is usable across devices but browsers generally require HTTPS for PWA installation. Tailscale HTTPS/Serve setup is the next networking step. The service worker never caches `/api/` responses or private task data.
+
 ## API surface
 
 - `GET /api/tasks`, `POST /api/tasks`

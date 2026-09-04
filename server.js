@@ -17,7 +17,7 @@ const legacyTaskFile = join(dataDir, "tasks.json");
 const sqlite = process.env.ZENITH_SQLITE || "sqlite3";
 const port = Number(process.env.PORT || 3000);
 const host = process.env.ZENITH_HOST || process.env.HOST || "127.0.0.1";
-const contentTypes = { ".css": "text/css", ".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml" };
+const contentTypes = { ".css": "text/css", ".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json" };
 let databaseReady;
 const liveClients = new Map();
 
