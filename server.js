@@ -35,9 +35,11 @@ async function initializeDatabase() {
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT 'Inbox', priority TEXT NOT NULL DEFAULT 'medium', due_date TEXT, completed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS memory_items (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_accounts (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, access_token TEXT, refresh_token TEXT NOT NULL, token_expires_at TEXT, calendar_name TEXT, connected_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_oauth_states (state TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tasks_user_updated ON tasks(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS memory_user_updated ON memory_items(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expires_at);`);
   const userColumns = await runSql("PRAGMA table_info(users)", true);
@@ -79,6 +81,13 @@ function taskInput(input, existing = {}) {
   const title = (input.title ?? existing.title ?? "").trim();
   if (!title) throw new Error("A task needs a title.");
   return { ...existing, title, notes: (input.notes ?? existing.notes ?? "").trim(), project: (input.project ?? existing.project ?? "Inbox").trim() || "Inbox", priority: ["low", "medium", "high"].includes(input.priority) ? input.priority : (existing.priority || "medium"), dueDate: input.dueDate === undefined ? (existing.dueDate || null) : (input.dueDate || null), completed: input.completed === undefined ? Boolean(existing.completed) : Boolean(input.completed), updatedAt: new Date().toISOString() };
+}
+function memoryInput(input, existing = {}) {
+  const content = String(input.content ?? existing.content ?? "").trim();
+  if (!content) throw new Error("Context needs some text.");
+  if (content.length > 2000) throw new Error("Keep context notes under 2,000 characters.");
+  const category = String(input.category ?? existing.category ?? "general").trim().slice(0, 40) || "general";
+  return { ...existing, content, category, updatedAt: new Date().toISOString() };
 }
 function tokenHash(token) { return scryptSync(token, "zenith-session", 32).toString("hex"); }
 function passwordHash(password) { const salt = randomBytes(16).toString("hex"); return `${salt}:${scryptSync(password, salt, 64).toString("hex")}`; }
@@ -132,6 +141,8 @@ function broadcastTasksChanged(userId) {
 }
 function taskFromRow(row) { return { id: row.id, title: row.title, notes: row.notes, project: row.project, priority: row.priority, dueDate: row.dueDate, completed: Boolean(row.completed), createdAt: row.createdAt, updatedAt: row.updatedAt }; }
 async function listTasks(userId) { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC`, true); return rows.map(taskFromRow); }
+function memoryFromRow(row) { return { id: row.id, category: row.category, content: row.content, createdAt: row.createdAt, updatedAt: row.updatedAt }; }
+async function listMemory(userId) { const rows = await runSql(`SELECT id,category,content,created_at AS createdAt,updated_at AS updatedAt FROM memory_items WHERE user_id=${sqlQuote(userId)} ORDER BY updated_at DESC`, true); return rows.map(memoryFromRow); }
 function assistantActions(actions, tasks) {
   if (!Array.isArray(actions)) return [];
   const taskIds = new Set(tasks.map((task) => task.id));
@@ -269,12 +280,14 @@ async function assistantChat(userId, input) {
   if (message.length > 4000) throw new Error("Keep assistant messages under 4,000 characters.");
   const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC LIMIT 100`, true);
   const context = rows.length ? rows.map((task, index) => `${index + 1}. (${task.id}) [${task.completed ? "done" : "open"}] ${task.title} — ${task.project}, ${task.priority} priority${task.dueDate ? `, due ${task.dueDate}` : ""}${task.notes ? ` — ${task.notes.slice(0, 500)}` : ""}`).join("\n") : "No tasks are currently saved.";
+  const memories = await runSql(`SELECT category,content FROM memory_items WHERE user_id=${sqlQuote(userId)} ORDER BY updated_at DESC LIMIT 50`, true);
+  const memoryContext = memories.length ? memories.map((memory) => `- [${memory.category}] ${memory.content}`).join("\n") : "No persistent context has been saved.";
   const calendarContext = await assistantCalendarContext(userId);
   const history = Array.isArray(input.history) ? input.history.filter((item) => ["user", "assistant"].includes(item?.role) && typeof item.content === "string").slice(-8).map((item) => ({ role: item.role, content: item.content.slice(0, 2000) })) : [];
   let model = process.env.OLLAMA_MODEL || null;
   if (!model) { const tags = await ollamaJson("/api/tags", { timeout: 1500 }); model = tags.models?.[0]?.name || null; }
   if (!model) throw new Error("No Ollama model is available.");
-  const result = await ollamaJson("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 30000, body: JSON.stringify({ model, stream: false, format: "json", keep_alive: process.env.OLLAMA_KEEP_ALIVE || "5m", messages: [{ role: "system", content: `You are Zenith, a calm local personal manager. Use the user's task list and calendar context below. Never invent calendar events; if calendar context says it is unavailable, say that when relevant. Return one valid JSON object with exactly these keys: reply (a concise helpful string) and actions (an array). Actions are proposals only and are never applied automatically. Use create_task with title, optional notes/project/priority/dueDate; update_task with taskId and optional fields; complete_task with taskId; or delete_task with taskId. Only use task IDs from the list. If no change is requested, return an empty actions array.\n\nUser task list:\n${context}\n\nGoogle Calendar context:\n${calendarContext}` }, ...history, { role: "user", content: message }] }) });
+  const result = await ollamaJson("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 30000, body: JSON.stringify({ model, stream: false, format: "json", keep_alive: process.env.OLLAMA_KEEP_ALIVE || "5m", messages: [{ role: "system", content: `You are Zenith, a calm local personal manager. Use the user's task list, persistent context, and calendar context below. Treat persistent context as user-provided guidance, not as a reason to invent facts. Never invent calendar events; if calendar context says it is unavailable, say that when relevant. Return one valid JSON object with exactly these keys: reply (a concise helpful string) and actions (an array). Actions are proposals only and are never applied automatically. Use create_task with title, optional notes/project/priority/dueDate; update_task with taskId and optional fields; complete_task with taskId; or delete_task with taskId. Only use task IDs from the list. If no change is requested, return an empty actions array.\n\nUser task list:\n${context}\n\nPersistent context:\n${memoryContext}\n\nGoogle Calendar context:\n${calendarContext}` }, ...history, { role: "user", content: message }] }) });
   const content = result.message?.content?.trim();
   if (!content) throw new Error("Ollama returned an empty response.");
   let parsed; try { parsed = JSON.parse(content); } catch { parsed = { reply: content, actions: [] }; }
@@ -348,6 +361,11 @@ async function api(request, response, url) {
     }
   }
   if (request.method === "DELETE" && path === "/api/calendar/connection") { await runSql(`DELETE FROM calendar_accounts WHERE user_id=${sqlQuote(user.id)}; DELETE FROM calendar_oauth_states WHERE user_id=${sqlQuote(user.id)}`); return send(response, 204, {}); }
+  if (request.method === "GET" && path === "/api/memory") return send(response, 200, { memories: await listMemory(user.id) });
+  if (request.method === "POST" && path === "/api/memory") { const input = memoryInput(await body(request), { id: randomUUID(), createdAt: new Date().toISOString() }); await runSql(`INSERT INTO memory_items VALUES (${sqlQuote(input.id)},${sqlQuote(user.id)},${sqlQuote(input.category)},${sqlQuote(input.content)},${sqlQuote(input.createdAt)},${sqlQuote(input.updatedAt)})`); return send(response, 201, { memory: memoryFromRow(input) }); }
+  const memoryMatch = path.match(/^\/api\/memory\/([\w-]+)$/);
+  if (memoryMatch && request.method === "PATCH") { const rows = await runSql(`SELECT id,category,content,created_at AS createdAt,updated_at AS updatedAt FROM memory_items WHERE id=${sqlQuote(memoryMatch[1])} AND user_id=${sqlQuote(user.id)}`, true); if (!rows[0]) return send(response, 404, { error: "Context note not found." }); const memory = memoryInput(await body(request), memoryFromRow(rows[0])); await runSql(`UPDATE memory_items SET category=${sqlQuote(memory.category)},content=${sqlQuote(memory.content)},updated_at=${sqlQuote(memory.updatedAt)} WHERE id=${sqlQuote(memory.id)} AND user_id=${sqlQuote(user.id)}`); return send(response, 200, { memory }); }
+  if (memoryMatch && request.method === "DELETE") { const result = await runSql(`DELETE FROM memory_items WHERE id=${sqlQuote(memoryMatch[1])} AND user_id=${sqlQuote(user.id)}; SELECT changes() AS changes`, true); if (!result.at(-1)?.changes) return send(response, 404, { error: "Context note not found." }); return send(response, 204, {}); }
   if (request.method === "GET" && path === "/api/voice/status") return send(response, 200, { configured: voiceConfigured(), ttsConfigured: ttsConfigured() });
   if (request.method === "POST" && path === "/api/voice/transcribe") {
     try {

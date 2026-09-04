@@ -91,6 +91,7 @@ test("Zenith API integration", async () => {
   assert.match(page.body, /Add project, priority, date, or notes/);
   assert.match(page.body, /Speak/);
   assert.match(page.body, /Enable reminders/);
+  assert.match(page.body, /Help Zenith remember/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
   assert.match(serviceWorker.body, /api/);
@@ -156,6 +157,11 @@ test("Zenith API integration", async () => {
   assert.equal(spoken.response.status, 200);
   assert.equal(spoken.response.headers["content-type"], "audio/wav");
   assert.equal(spoken.body, "audio");
+
+  const savedMemory = await request("/api/memory", jsonOptions("POST", { category: "preference", content: "I prefer quiet evenings for focused work." }, reLoginCookie));
+  assert.equal(savedMemory.response.status, 201);
+  const memories = await request("/api/memory", { headers: { Cookie: reLoginCookie } });
+  assert.deepEqual(memories.body.memories.map(({ category, content }) => ({ category, content })), [{ category: "preference", content: "I prefer quiet evenings for focused work." }]);
 
   const calendarUnconfigured = await request("/api/calendar/status", { headers: { Cookie: reLoginCookie } });
   assert.deepEqual(calendarUnconfigured.body, { configured: false, connected: false, calendarName: null, connectedAt: null });
@@ -226,6 +232,7 @@ test("Zenith API integration", async () => {
   assert.equal(assistant.body.actions.length, 1);
   assert.match(receivedChat.messages[0].content, /private task/i);
   assert.match(receivedChat.messages[0].content, /Focus time/i);
+  assert.match(receivedChat.messages[0].content, /quiet evenings/i);
   assert.equal(receivedChat.messages.at(-1).content, "What should I focus on?");
   assistantActionsResponse = [{ type: "complete_task", taskId: created.body.task.id }];
   const existingTaskAction = await request("/api/assistant/chat", jsonOptions("POST", { message: "Mark the edited task complete" }, reLoginCookie));
@@ -248,6 +255,8 @@ test("Zenith API integration", async () => {
   assert.equal(tasksAfterUnload.body.tasks.length, 3);
   const disconnected = await request("/api/calendar/connection", { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(disconnected.response.status, 204);
+  const deletedMemory = await request(`/api/memory/${savedMemory.body.memory.id}`, { method: "DELETE", headers: { Cookie: reLoginCookie } });
+  assert.equal(deletedMemory.response.status, 204);
 
   const logout = await request("/api/auth/session", { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(logout.response.status, 204);
