@@ -20,6 +20,8 @@ For the intended Windows home-server setup, install Tailscale on the Windows PC 
 
 Zenith includes a web-app manifest and service worker. The static app shell can be installed as a PWA when served from a secure context. `http://localhost:3000` is suitable for local browser testing; a raw `http://100.x.x.x:3000` Tailscale address is usable across devices but browsers generally require HTTPS for PWA installation. Tailscale HTTPS/Serve setup is the next networking step. The service worker never caches `/api/` responses or private task data.
 
+To use private HTTPS on the Windows home server, run `scripts\start-zenith-tailscale-https.ps1`. Tailscale Serve proxies the local Zenith port over the PC's private `https://...ts.net` address and leaves Zenith itself bound to localhost. The helper also sets the Google OAuth callback to that HTTPS address for the current session unless `GOOGLE_REDIRECT_URI` is already set. MagicDNS and HTTPS certificates must be enabled for the tailnet; Tailscale may open an approval page the first time. Use Tailscale Serve, not Funnel, for Zenith.
+
 ## API surface
 
 - `GET /api/tasks`, `POST /api/tasks`
