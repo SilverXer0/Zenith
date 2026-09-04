@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type AssistantAction, type AssistantResult, type Priority, type Task, type User, type VoiceStatus } from "../lib/api";
 import PlanningPanels from "./insights";
+import { InstallButton } from "./pwa";
+import { ReminderControls } from "./notifications";
 import { SpeakButton, VoiceInputButton } from "./voice";
 
 type Draft = { title: string; notes: string; project: string; priority: Priority; dueDate: string };
@@ -247,6 +249,8 @@ export default function Dashboard() {
         <div><p className="eyebrow">ZENITH / PERSONAL MANAGER</p><h1 className="mt-2 text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">Your day, in focus.</h1><p className="muted mt-2">{today}</p></div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="muted rounded-full border border-[var(--line)] bg-white/40 px-3 py-2">{live ? "● Live sync connected" : "○ Live sync reconnecting"}</span>
+          <ReminderControls tasks={tasks} />
+          <InstallButton />
           <button className="quiet-button" onClick={unloadModel} hidden={!assistantModel}>Release model</button>
           <button className="quiet-button" onClick={signOut}>Sign out</button>
         </div>
