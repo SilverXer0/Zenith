@@ -40,6 +40,8 @@ export type CalendarStatus = {
   connectedAt: string | null;
 };
 
+export type VoiceStatus = { configured: boolean; ttsConfigured: boolean };
+
 export type CalendarProjection = {
   connected: boolean;
   available: boolean;
@@ -127,4 +129,25 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+export async function apiBlob(path: string, init: ApiInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers);
+  let body = init.body;
+  if (init.json !== undefined) {
+    headers.set("Content-Type", "application/json");
+    body = JSON.stringify(init.json);
+  }
+  const response = await fetch(path, { ...init, headers, body, cache: "no-store" });
+  if (!response.ok) {
+    let message = "Zenith could not complete that request.";
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) message = payload.error;
+    } catch {
+      // Preserve the generic message when the server does not return JSON.
+    }
+    throw new ApiError(message, response.status);
+  }
+  return response.blob();
 }
