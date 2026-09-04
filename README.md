@@ -8,6 +8,8 @@ The target frontend now lives in [`frontend/`](frontend/README.md). It is intent
 
 ## Run it
 
+For the controlled Python/Next migration and Windows home-server launch, follow [the Windows cutover guide](docs/windows-cutover.md). The Node command below remains the working prototype and rollback path until real-device verification is complete.
+
 Requires Node.js 20 or newer and the `sqlite3` command-line runtime.
 
 ```bash

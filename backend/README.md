@@ -1,8 +1,10 @@
-# Python backend migration — development only
+# Python backend and migration runtime
 
 This is the first executable step toward Zenith's planned **Python/FastAPI backend**. The working application still starts with `npm start`; the Windows/Tailscale helpers still start Node. Do not replace that service with this backend yet.
 
 ## What this slice does
+
+The Python API is now the target core used by the separate Next frontend. The existing Node runtime remains available for rollback; use the Windows cutover guide before switching the home server.
 
 - Health and local account setup/sign-in/sign-out/session APIs.
 - Authenticated, per-user task CRUD with the existing camel-case response format.
@@ -18,7 +20,7 @@ This is the first executable step toward Zenith's planned **Python/FastAPI backe
 - Atomic task writes and completion-event recording; concurrent completions record one transition.
 - Same-origin write checks, HttpOnly/SameSite cookies, optional Secure cookies, and uncached API responses.
 
-Core startup, tasks, context, Calendar, and deterministic planning neither connect to nor load Ollama or voice adapters. The assistant and voice services are optional and fail independently when their local runtime is unavailable. This development backend does not serve the current UI. The target frontend and Windows cutover are still separate gates, not implied by these API implementations.
+Core startup, tasks, context, Calendar, and deterministic planning neither connect to nor load Ollama or voice adapters. The assistant and voice services are optional and fail independently when their local runtime is unavailable. The separate target frontend proxies to this API during development and on the controlled Windows launch path. Real Windows, Tailscale, Calendar, model, and voice checks remain deployment gates.
 
 ## Optional Google Calendar contract
 
@@ -115,5 +117,7 @@ Task input is intentionally stricter than the prototype: dates must be real `YYY
 The Python suite covers actual FastAPI requests, server startup, independent sessions, expiry, user isolation, validation, transactions, concurrency, restart persistence, legacy JSON, old SQLite schemas, and real Node → Python → Node compatibility. The live-event tests use real HTTP streams against temporary Uvicorn servers, verifying task changes across two sessions, user isolation, failed-write silence, reconnect snapshots, confirmed assistant changes, and logout/expiry/revocation. Separate broker/ASGI tests cover 10,000-change bursts, heartbeat checks, blocked sends, cancellation and cleanup. Context/planning tests cover CRUD, account isolation, restart persistence, ordering, failed-write rollback, date/offset boundaries, completion-history retention, calendar-unavailable state, read-only operation without Ollama, and exact Node API comparisons. Calendar tests use a disposable local service to verify OAuth state ownership/expiry/replay protection, code exchange, token refresh and retry, pagination, event projection, remote failures, schema upgrades, disconnect, assistant/planning context, and Python → Node compatibility. Assistant tests use a disposable loopback Ollama simulator to verify owner-only context, bounded inputs/outputs, structured proposal filtering, no pre-confirmation writes, atomic confirmation, task-event publication, offline Core independence, local-endpoint restrictions, explicit-cloud rejection, model discovery, failures, and unload behavior. Voice tests use trusted disposable local commands to verify authentication, optional operation, raw audio limits, MIME suffixes, temporary files, environment scrubbing, output limits, timeouts, configuration failures, busy guards, WAV responses, and OpenAPI documentation. All fixtures use disposable directories; real task data and credentials are not part of the tests. The Node suite remains `npm test`.
 
 These checks do not prove a complete browser UI against Python, Windows packaging, real Tailscale access, actual Google OAuth/Calendar reads, real Qwen inference or VRAM release, actual Whisper/Windows speech-engine execution, microphone/speaker operation, timezone-aware schedule planning, or full API parity. The next migration gate is the responsive Next.js/TypeScript/Tailwind frontend, followed by real-device and Windows cutover checks. See [the migration plan](../docs/architecture-migration.md) for the full scope.
+
+The target Next frontend now exists and is covered by its own checks. The remaining migration gate is real-device and Windows cutover verification; see the Windows cutover guide and migration plan.
 
 Implementation references: [Google web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server), [Google Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [Google event listing](https://developers.google.com/workspace/calendar/api/v3/reference/events/list), [Ollama local API](https://docs.ollama.com/api/introduction), [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs), [Ollama model unloading and local-only setting](https://docs.ollama.com/faq), [FastAPI custom responses](https://fastapi.tiangolo.com/advanced/custom-response/), [Python subprocess](https://docs.python.org/3/library/subprocess.html), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/), [SSE and the browser event contract](https://fastapi.tiangolo.com/tutorial/server-sent-events/), and [Python SQLite transactions](https://docs.python.org/3/library/sqlite3.html).
