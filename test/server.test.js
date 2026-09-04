@@ -93,6 +93,7 @@ test("Zenith API integration", async () => {
   assert.match(page.body, /Enable reminders/);
   assert.match(page.body, /Help Zenith remember/);
   assert.match(page.body, /Today’s focus/);
+  assert.match(page.body, /Shape the week/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
   assert.match(serviceWorker.body, /api/);
@@ -139,6 +140,13 @@ test("Zenith API integration", async () => {
   assert.equal(briefing.body.focusTasks[0].title, "Edited private task");
   const invalidBriefing = await request("/api/briefing?date=not-a-date", { headers: { Cookie: localCookie } });
   assert.equal(invalidBriefing.response.status, 400);
+  const weeklyPlan = await request("/api/weekly-plan?start=2026-09-01", { headers: { Cookie: localCookie } });
+  assert.equal(weeklyPlan.response.status, 200);
+  assert.deepEqual(weeklyPlan.body.counts, { open: 2, overdue: 0, scheduled: 1, unscheduled: 1 });
+  assert.equal(weeklyPlan.body.days[2].tasks[0].title, "Edited private task");
+  assert.equal(weeklyPlan.body.unscheduled[0].title, "Migrated task");
+  const invalidWeeklyPlan = await request("/api/weekly-plan?start=2026-02-31", { headers: { Cookie: localCookie } });
+  assert.equal(invalidWeeklyPlan.response.status, 400);
 
   const reLogin = await request("/api/auth/session", jsonOptions("POST", { displayName: "Alice", password: "correct horse" }));
   assert.equal(reLogin.response.status, 201);
@@ -204,6 +212,11 @@ test("Zenith API integration", async () => {
   assert.equal(calendarConnected.body.calendarName, "Personal Calendar");
   const calendarEvents = await request("/api/calendar/events?start=2026-09-04T00:00:00Z&end=2026-09-05T00:00:00Z", { headers: { Cookie: reLoginCookie } });
   assert.deepEqual(calendarEvents.body.events, [{ id: "event-1", title: "Focus time", start: "2026-09-04T18:00:00-07:00", end: "2026-09-04T19:00:00-07:00", allDay: false, location: "Home", status: "confirmed" }]);
+  const connectedWeeklyPlan = await request("/api/weekly-plan?start=2026-09-01", { headers: { Cookie: reLoginCookie } });
+  assert.equal(connectedWeeklyPlan.response.status, 200);
+  assert.equal(connectedWeeklyPlan.body.calendar.connected, true);
+  assert.equal(connectedWeeklyPlan.body.calendar.available, true);
+  assert.equal(connectedWeeklyPlan.body.calendar.events[0].title, "Focus time");
   const unauthenticatedEvents = await request("/api/events");
   assert.equal(unauthenticatedEvents.response.status, 401);
   const eventStream = await openEventStream(reLoginCookie);

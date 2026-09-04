@@ -143,9 +143,10 @@ function taskFromRow(row) { return { id: row.id, title: row.title, notes: row.no
 async function listTasks(userId) { const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed,created_at AS createdAt,updated_at AS updatedAt FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC`, true); return rows.map(taskFromRow); }
 function briefingDate(url) {
   const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) throw typedError("Briefing date must be a valid YYYY-MM-DD date.", "BRIEFING_BAD_DATE");
+  if (!validDateString(date)) throw typedError("Briefing date must be a valid YYYY-MM-DD date.", "BRIEFING_BAD_DATE");
   return date;
 }
+function validDateString(date) { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false; const parsed = new Date(`${date}T00:00:00Z`); return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date; }
 function focusTaskSort(a, b, date) {
   const dueRank = (task) => !task.dueDate ? 2 : task.dueDate < date ? 0 : task.dueDate === date ? 1 : 2;
   const priorityRank = { high: 0, medium: 1, low: 2 };
@@ -156,6 +157,19 @@ async function buildBriefing(userId, date) {
   const open = tasks.filter((task) => !task.completed); const overdue = open.filter((task) => task.dueDate && task.dueDate < date); const dueToday = open.filter((task) => task.dueDate === date);
   const focusTasks = [...open].sort((a, b) => focusTaskSort(a, b, date)).slice(0, 5);
   return { date, counts: { open: open.length, overdue: overdue.length, dueToday: dueToday.length }, focusTasks };
+}
+function weeklyPlanStart(url) {
+  const start = url.searchParams.get("start") || new Date().toISOString().slice(0, 10);
+  if (!validDateString(start)) throw typedError("Weekly plan start must be a valid YYYY-MM-DD date.", "WEEKLY_BAD_DATE");
+  return start;
+}
+async function buildWeeklyPlan(userId, start) {
+  const tasks = await listTasks(userId); const open = tasks.filter((task) => !task.completed); const startDate = new Date(`${start}T00:00:00Z`); const endDate = new Date(startDate.getTime() + 7 * 86400000); const end = endDate.toISOString().slice(0, 10);
+  const scheduled = open.filter((task) => task.dueDate && task.dueDate >= start && task.dueDate < end); const overdue = open.filter((task) => task.dueDate && task.dueDate < start); const unscheduled = open.filter((task) => !task.dueDate);
+  const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(startDate.getTime() + index * 86400000).toISOString().slice(0, 10); return { date, tasks: scheduled.filter((task) => task.dueDate === date) }; });
+  const calendar = { connected: false, available: false, events: [] }; const account = await calendarAccount(userId);
+  if (account) { calendar.connected = true; try { calendar.events = await listCalendarEvents(userId, { start: startDate, end: endDate }); calendar.available = true; } catch { /* Calendar is optional for planning. */ } }
+  return { start, end, counts: { open: open.length, overdue: overdue.length, scheduled: scheduled.length, unscheduled: unscheduled.length }, days, unscheduled, calendar };
 }
 function memoryFromRow(row) { return { id: row.id, category: row.category, content: row.content, createdAt: row.createdAt, updatedAt: row.updatedAt }; }
 async function listMemory(userId) { const rows = await runSql(`SELECT id,category,content,created_at AS createdAt,updated_at AS updatedAt FROM memory_items WHERE user_id=${sqlQuote(userId)} ORDER BY updated_at DESC`, true); return rows.map(memoryFromRow); }
@@ -383,6 +397,7 @@ async function api(request, response, url) {
   if (memoryMatch && request.method === "PATCH") { const rows = await runSql(`SELECT id,category,content,created_at AS createdAt,updated_at AS updatedAt FROM memory_items WHERE id=${sqlQuote(memoryMatch[1])} AND user_id=${sqlQuote(user.id)}`, true); if (!rows[0]) return send(response, 404, { error: "Context note not found." }); const memory = memoryInput(await body(request), memoryFromRow(rows[0])); await runSql(`UPDATE memory_items SET category=${sqlQuote(memory.category)},content=${sqlQuote(memory.content)},updated_at=${sqlQuote(memory.updatedAt)} WHERE id=${sqlQuote(memory.id)} AND user_id=${sqlQuote(user.id)}`); return send(response, 200, { memory }); }
   if (memoryMatch && request.method === "DELETE") { const result = await runSql(`DELETE FROM memory_items WHERE id=${sqlQuote(memoryMatch[1])} AND user_id=${sqlQuote(user.id)}; SELECT changes() AS changes`, true); if (!result.at(-1)?.changes) return send(response, 404, { error: "Context note not found." }); return send(response, 204, {}); }
   if (request.method === "GET" && path === "/api/briefing") { try { return send(response, 200, await buildBriefing(user.id, briefingDate(url))); } catch (error) { if (error.code === "BRIEFING_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
+  if (request.method === "GET" && path === "/api/weekly-plan") { try { return send(response, 200, await buildWeeklyPlan(user.id, weeklyPlanStart(url))); } catch (error) { if (error.code === "WEEKLY_BAD_DATE") return send(response, 400, { error: error.message }); throw error; } }
   if (request.method === "GET" && path === "/api/voice/status") return send(response, 200, { configured: voiceConfigured(), ttsConfigured: ttsConfigured() });
   if (request.method === "POST" && path === "/api/voice/transcribe") {
     try {
