@@ -71,14 +71,21 @@ class Auth:
 
     def current_user(self, token: str | None) -> dict:
         if token and len(token) <= 128:
-            with self.database.connection() as connection:
-                user = connection.execute("""SELECT u.id, u.display_name FROM sessions s JOIN users u ON u.id=s.user_id
-                    WHERE s.token_hash = ? AND s.expires_at > ?""", (token_hash(token), timestamp())).fetchone()
-                if user:
-                    return {"id": user["id"], "displayName": user["display_name"]}
+            return self.user_for_session_hash(token_hash(token))
+        raise ApiError(401, "Authentication required.")
+
+    def user_for_session_hash(self, hashed_token: str) -> dict:
+        with self.database.connection() as connection:
+            user = connection.execute("""SELECT u.id, u.display_name FROM sessions s JOIN users u ON u.id=s.user_id
+                WHERE s.token_hash = ? AND s.expires_at > ?""", (hashed_token, timestamp())).fetchone()
+            if user:
+                return {"id": user["id"], "displayName": user["display_name"]}
         raise ApiError(401, "Authentication required.")
 
     def logout(self, token: str | None):
         if token and len(token) <= 128:
+            hashed_token = token_hash(token)
             with self.database.connection(write=True) as connection:
-                connection.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash(token),))
+                connection.execute("DELETE FROM sessions WHERE token_hash = ?", (hashed_token,))
+            return hashed_token
+        return None

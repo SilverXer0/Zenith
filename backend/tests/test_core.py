@@ -61,6 +61,12 @@ class CoreTests(unittest.TestCase):
             app = create_app()
         self.assertEqual(app.state.database.path, ROOT / "data-python-dev" / "zenith.sqlite")
 
+    def test_openapi_describes_the_live_task_stream(self):
+        response = self.client.get("/openapi.json")
+        self.assertEqual(response.status_code, 200)
+        stream = response.json()["paths"]["/api/events"]["get"]
+        self.assertIn("text/event-stream", stream["responses"]["200"]["content"])
+
     def test_https_cookie_can_be_marked_secure(self):
         with patch.dict(os.environ, {"ZENITH_COOKIE_SECURE": "true"}):
             app = create_app(self.directory)

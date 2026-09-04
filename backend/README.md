@@ -6,13 +6,28 @@ This is the first executable step toward Zenith's planned **Python/FastAPI backe
 
 - Health and local account setup/sign-in/sign-out/session APIs.
 - Authenticated, per-user task CRUD with the existing camel-case response format.
+- Authenticated live task events, with per-user isolation and session-aware stream cleanup.
 - SQLite through Python's standard library, without the external SQLite CLI.
 - Compatibility with the existing SQLite file, Node scrypt passphrases and hashed session tokens.
 - One-time legacy `tasks.json` import and upgrades of older user/task tables.
 - Atomic task writes and completion-event recording; concurrent completions record one transition.
 - Same-origin write checks, HttpOnly/SameSite cookies, optional Secure cookies, and uncached API responses.
 
-Core startup and task operations neither connect to nor load Ollama. This slice does **not** yet implement assistant, live event stream, calendar, memory, planning, summary, or voice endpoints. It does not serve the current UI. These are missing capabilities, not disabled implementations or feature parity.
+Core startup and task operations neither connect to nor load Ollama. This development backend does **not** yet implement assistant, calendar, memory, planning, summary, or voice endpoints. It does not serve the current UI. These are missing capabilities, not disabled implementations or feature parity.
+
+## Live task event contract
+
+`GET /api/events` requires the normal `zenith_session` cookie and returns `text/event-stream`. It matches the current client's event names:
+
+- `ready` with `{}` data on every connection, including reconnects. Fetch `/api/tasks` to catch up on changes missed while disconnected.
+- `tasks_changed` with `{}` data after a successful task create, edit, completion/reopening, or deletion commits. Fetch the latest task snapshot; the event is an invalidation notice, not a task payload.
+- An idle heartbeat comment every 15 seconds and a one-second browser reconnect hint.
+
+Streams only receive their user's notices. Signing out closes streams for that session without signing out another device. Before every event/heartbeat, the database session is rechecked; expiry, external revocation (including passphrase recovery), or unavailable auth storage closes the stream. Requests with invalid sessions receive 401 before opening a stream. No task text, cookie, or session hash is included in event data.
+
+Each subscriber keeps at most one pending invalidation and one scheduled wake, so a slow device does not accumulate an event backlog. Blocked response sends have a ten-second timeout; disconnect/cancellation/shutdown releases subscriber state. Failed or rolled-back writes emit no change event. No Ollama or extra service is needed.
+
+The event broker is **single-process**. Use the default single Uvicorn worker; do not add `--workers` or run a second backend against the same live database. External database edits do not publish task events. There is no durable event log or `Last-Event-ID` replay; recovery uses `ready` plus a fresh task read. Confirmed assistant mutations will use this path when that API is ported.
 
 ## Development setup
 
@@ -52,8 +67,8 @@ Task input is intentionally stricter than the prototype: dates must be real `YYY
 
 ## Verification and remaining gates
 
-The Python suite covers actual FastAPI requests, server startup, independent sessions, expiry, user isolation, validation, transactions, concurrency, restart persistence, legacy JSON, old SQLite schemas, and real Node → Python → Node compatibility. All fixtures use disposable directories; real task data is not part of the tests. It also checks that pre-existing context and calendar-table data are not removed by migration. The Node suite remains `npm test`.
+The Python suite covers actual FastAPI requests, server startup, independent sessions, expiry, user isolation, validation, transactions, concurrency, restart persistence, legacy JSON, old SQLite schemas, and real Node → Python → Node compatibility. The live-event tests use real HTTP streams against temporary Uvicorn servers, verifying task changes across two sessions, user isolation, failed-write silence, reconnect snapshots, and logout/expiry/revocation. Separate broker/ASGI tests cover 10,000-change bursts, heartbeat checks, blocked sends, cancellation and cleanup. All fixtures use disposable directories; real task data is not part of the tests. It also checks that pre-existing context and calendar-table data are not removed by migration. The Node suite remains `npm test`.
 
-These checks do not prove Windows packaging, real Tailscale access, actual Google OAuth, real Qwen inference, microphone/speaker operation, or full API parity. The next migration gate is Python live task events, followed by the remaining existing API surfaces and the responsive Next.js/TypeScript/Tailwind frontend. See [the migration plan](../docs/architecture-migration.md) for the full scope.
+These checks do not prove a complete browser UI against Python, Windows packaging, real Tailscale access, actual Google OAuth, real Qwen inference, microphone/speaker operation, or full API parity. The next migration gate is the remaining existing API surfaces, followed by the responsive Next.js/TypeScript/Tailwind frontend. See [the migration plan](../docs/architecture-migration.md) for the full scope.
 
-Implementation references: [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/), [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/), and [Python SQLite transactions](https://docs.python.org/3/library/sqlite3.html).
+Implementation references: [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/), [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/), [SSE and the browser event contract](https://fastapi.tiangolo.com/tutorial/server-sent-events/), and [Python SQLite transactions](https://docs.python.org/3/library/sqlite3.html).

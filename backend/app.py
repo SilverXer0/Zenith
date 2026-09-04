@@ -11,9 +11,10 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
-from .auth import Auth, COOKIE_NAME, SESSION_SECONDS
+from .auth import Auth, COOKIE_NAME, SESSION_SECONDS, token_hash
 from .database import Database
 from .errors import ApiError
+from .events import TaskEvents, TaskEventResponse
 from .models import Credentials, TaskPatch
 
 
@@ -22,15 +23,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     directory = Path(data_dir or os.environ.get("ZENITH_DATA_DIR") or Path(__file__).resolve().parent.parent / "data-python-dev")
     database = Database(directory)
     auth = Auth(database)
+    events = TaskEvents()
     secure_cookie = os.environ.get("ZENITH_COOKIE_SECURE", "").lower() in ("1", "true")
 
     @asynccontextmanager
     async def lifespan(app):
         await run_in_threadpool(database.initialize)
-        yield
+        try:
+            yield
+        finally:
+            events.close_all()
 
     app = FastAPI(title="Zenith Core", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.database = database
+    app.state.task_events = events
 
     @app.middleware("http")
     async def boundaries(request: Request, call_next):
@@ -91,10 +97,17 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.delete("/api/auth/session")
     def logout(request: Request):
-        auth.logout(request.cookies.get(COOKIE_NAME))
+        hashed_token = auth.logout(request.cookies.get(COOKIE_NAME))
+        if hashed_token:
+            events.close_session(hashed_token)
         response = Response(status_code=204)
         response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="strict", secure=secure_cookie)
         return response
+
+    @app.get("/api/events", response_class=TaskEventResponse)
+    def task_events(request: Request, current_user: dict = Depends(user)):
+        hashed_token = token_hash(request.cookies[COOKIE_NAME])
+        return TaskEventResponse(events.stream(current_user["id"], hashed_token, auth))
 
     @app.get("/api/tasks")
     def tasks(current_user: dict = Depends(user)):
@@ -102,15 +115,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/tasks", status_code=201)
     def create_task(patch: TaskPatch, current_user: dict = Depends(user)):
-        return {"task": database.save_task(current_user["id"], patch.model_dump(exclude_unset=True))}
+        task = database.save_task(current_user["id"], patch.model_dump(exclude_unset=True))
+        events.publish(current_user["id"])
+        return {"task": task}
 
     @app.patch("/api/tasks/{task_id}")
     def update_task(task_id: str, patch: TaskPatch, current_user: dict = Depends(user)):
-        return {"task": database.save_task(current_user["id"], patch.model_dump(exclude_unset=True), task_id)}
+        task = database.save_task(current_user["id"], patch.model_dump(exclude_unset=True), task_id)
+        events.publish(current_user["id"])
+        return {"task": task}
 
     @app.delete("/api/tasks/{task_id}", status_code=204)
     def delete_task(task_id: str, current_user: dict = Depends(user)):
         database.delete_task(current_user["id"], task_id)
+        events.publish(current_user["id"])
         return Response(status_code=204)
 
     return app

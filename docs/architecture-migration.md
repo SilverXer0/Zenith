@@ -8,7 +8,7 @@ Zenith is a personal manager, not an autonomous executor. Its target remains a W
 | --- | --- | --- |
 | Persistent tasks, manual edits, inbox capture, due dates, priorities and projects | Node/SQLite and responsive plain-JavaScript UI; Python auth/task API foundation | Port the UI to the target stack and verify end-to-end parity |
 | User/session boundaries and legacy migration | Node implementation; Python compatibility and isolation tests | Complete authentication hardening and deployment checks during cutover |
-| Cross-device access | Tailscale startup scripts and authenticated Node task events; two-browser sync tests | Python event parity, then Windows/Mac/real-phone verification |
+| Cross-device access | Tailscale startup scripts and Node browser sync tests; Python per-user task events tested with real HTTP streams | Full Python/frontend parity, then Windows/Mac/real-phone verification |
 | Google Calendar read access | Node OAuth/read endpoints and UI | Python port, actual OAuth setup and schedule/timezone verification |
 | Local Qwen, natural-language commands, unloadable model | Optional Node Ollama adapter, confirmation-required task actions | Python adapter, real model tests and unload/VRAM verification on Windows |
 | Speech input and spoken replies | Optional local adapters in the prototype | Python API port and real device microphone/speaker testing |
@@ -21,7 +21,7 @@ Zenith is a personal manager, not an autonomous executor. Its target remains a W
 ## Sequence: independently testable commits
 
 1. **Python core foundation:** existing SQLite schema, authentication, task CRUD, migrations, completion history and cross-runtime tests. Development path only; Node remains the working service.
-2. **Python live task events:** retain the reconnect, per-user event boundaries and browser sync behavior already verified for Node. Test logout/session expiry and slow/disconnected clients.
+2. **Python live task events (implemented in development):** matching `ready`/`tasks_changed` contract, per-user notices, fresh-snapshot reconnects, session expiry/logout checks, bounded subscriber state and disconnect cleanup. Real HTTP stream and broker/ASGI tests pass; full frontend and Tailscale verification remain cutover gates.
 3. **Existing core API parity:** memory, briefing/planning/summary reads and optional Calendar/Ollama/voice services, with confirmation still required for every model-proposed mutation. Port behavior with contract tests; do not substitute fake “available” statuses for missing integrations.
 4. **Target frontend:** build the Next.js/TypeScript/Tailwind app against the stable API. Preserve quick capture, manual editing, live sync, mobile access, input drafts and error recovery. Keep the API same-origin behind the private entry point.
 5. **Windows cutover:** explicit Python/package setup, data backup, startup configuration, private HTTPS/Tailscale routing and rollback instructions. Verify Windows, Mac and phone before retiring the Node runtime. The two implementations are not a permanent dual-server architecture.
