@@ -140,15 +140,21 @@ test("Zenith API integration", async () => {
   assert.equal(reloadedTasks.body.tasks.length, 2);
 
   const voiceUnconfiguredStatus = await request("/api/voice/status", { headers: { Cookie: reLoginCookie } });
-  assert.deepEqual(voiceUnconfiguredStatus.body, { configured: false });
+  assert.deepEqual(voiceUnconfiguredStatus.body, { configured: false, ttsConfigured: false });
   const voiceUnconfigured = await request("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/webm", Cookie: reLoginCookie }, body: "test audio" });
   assert.equal(voiceUnconfigured.response.status, 409);
   process.env.ZENITH_STT_COMMAND = process.execPath;
   process.env.ZENITH_STT_ARGS = JSON.stringify(["-e", "console.log('local transcript')", "{input}"]);
+  process.env.ZENITH_TTS_COMMAND = process.execPath;
+  process.env.ZENITH_TTS_ARGS = JSON.stringify(["-e", "require('fs').writeFileSync(process.argv[2], 'audio')", "{text}", "{output}"]);
   const voiceConfiguredStatus = await request("/api/voice/status", { headers: { Cookie: reLoginCookie } });
-  assert.deepEqual(voiceConfiguredStatus.body, { configured: true });
+  assert.deepEqual(voiceConfiguredStatus.body, { configured: true, ttsConfigured: true });
   const transcribed = await request("/api/voice/transcribe", { method: "POST", headers: { "Content-Type": "audio/webm", Cookie: reLoginCookie }, body: "test audio" });
   assert.deepEqual(transcribed.body, { text: "local transcript" });
+  const spoken = await request("/api/voice/speak", { ...jsonOptions("POST", { text: "Hello from Zenith" }, reLoginCookie), raw: true });
+  assert.equal(spoken.response.status, 200);
+  assert.equal(spoken.response.headers["content-type"], "audio/wav");
+  assert.equal(spoken.body, "audio");
 
   const calendarUnconfigured = await request("/api/calendar/status", { headers: { Cookie: reLoginCookie } });
   assert.deepEqual(calendarUnconfigured.body, { configured: false, connected: false, calendarName: null, connectedAt: null });
@@ -263,4 +269,6 @@ test("Zenith API integration", async () => {
   delete process.env.GOOGLE_CALENDAR_URL;
   delete process.env.ZENITH_STT_COMMAND;
   delete process.env.ZENITH_STT_ARGS;
+  delete process.env.ZENITH_TTS_COMMAND;
+  delete process.env.ZENITH_TTS_ARGS;
 });

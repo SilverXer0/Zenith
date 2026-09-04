@@ -72,6 +72,7 @@ function send(response, status, payload, headers = {}) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
   response.end(status === 204 ? "" : JSON.stringify(payload));
 }
+function sendAudio(response, audio) { response.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store", "Content-Length": audio.length }); response.end(audio); }
 async function body(request) { let raw = ""; for await (const chunk of request) raw += chunk; try { return JSON.parse(raw || "{}"); } catch { throw new Error("Please send valid JSON."); } }
 async function rawBody(request, limit = 15 * 1024 * 1024) { const chunks = []; let size = 0; for await (const chunk of request) { size += chunk.length; if (size > limit) { const error = new Error("Voice recordings must be 15 MB or smaller."); error.code = "PAYLOAD_TOO_LARGE"; throw error; } chunks.push(chunk); } return Buffer.concat(chunks); }
 function taskInput(input, existing = {}) {
@@ -157,6 +158,7 @@ async function remoteJson(target, options = {}) {
 }
 function typedError(message, code) { const error = new Error(message); error.code = code; return error; }
 function voiceConfigured() { return Boolean(process.env.ZENITH_STT_COMMAND && process.env.ZENITH_STT_ARGS); }
+function ttsConfigured() { return Boolean(process.env.ZENITH_TTS_COMMAND && process.env.ZENITH_TTS_ARGS); }
 async function transcribeAudio(audio) {
   if (!voiceConfigured()) throw typedError("Local speech-to-text is not configured.", "VOICE_NOT_CONFIGURED");
   let args;
@@ -174,6 +176,23 @@ async function transcribeAudio(audio) {
     if (error.code?.startsWith("VOICE_")) throw error;
     throw typedError("Local speech-to-text could not transcribe that recording.", "VOICE_FAILED");
   } finally { await unlink(inputFile).catch(() => {}); }
+}
+async function synthesizeSpeech(text) {
+  if (!ttsConfigured()) throw typedError("Local text-to-speech is not configured.", "TTS_NOT_CONFIGURED");
+  let args;
+  try { args = JSON.parse(process.env.ZENITH_TTS_ARGS); } catch { throw typedError("Local text-to-speech configuration is invalid.", "TTS_BAD_CONFIG"); }
+  if (!Array.isArray(args) || !args.includes("{text}") || !args.includes("{output}")) throw typedError("ZENITH_TTS_ARGS must be a JSON array containing {text} and {output} placeholders.", "TTS_BAD_CONFIG");
+  const outputFile = join(tmpdir(), `zenith-speech-${randomUUID()}.wav`);
+  try {
+    const commandArgs = args.map((arg) => String(arg).replaceAll("{text}", text).replaceAll("{output}", outputFile));
+    await execFileAsync(process.env.ZENITH_TTS_COMMAND, commandArgs, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
+    const audio = await readFile(outputFile);
+    if (!audio.length) throw typedError("Local text-to-speech returned no audio.", "TTS_EMPTY");
+    return audio;
+  } catch (error) {
+    if (error.code?.startsWith("TTS_")) throw error;
+    throw typedError("Local text-to-speech could not create audio.", "TTS_FAILED");
+  } finally { await unlink(outputFile).catch(() => {}); }
 }
 const calendarScope = "https://www.googleapis.com/auth/calendar.readonly";
 function googleConfigured() { return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET); }
@@ -329,7 +348,7 @@ async function api(request, response, url) {
     }
   }
   if (request.method === "DELETE" && path === "/api/calendar/connection") { await runSql(`DELETE FROM calendar_accounts WHERE user_id=${sqlQuote(user.id)}; DELETE FROM calendar_oauth_states WHERE user_id=${sqlQuote(user.id)}`); return send(response, 204, {}); }
-  if (request.method === "GET" && path === "/api/voice/status") return send(response, 200, { configured: voiceConfigured() });
+  if (request.method === "GET" && path === "/api/voice/status") return send(response, 200, { configured: voiceConfigured(), ttsConfigured: ttsConfigured() });
   if (request.method === "POST" && path === "/api/voice/transcribe") {
     try {
       const audio = await rawBody(request);
@@ -340,6 +359,18 @@ async function api(request, response, url) {
       if (["VOICE_NOT_CONFIGURED", "VOICE_BAD_CONFIG"].includes(error.code)) return send(response, 409, { error: error.message });
       if (error.code === "VOICE_EMPTY") return send(response, 400, { error: error.message });
       return send(response, 503, { error: error.message || "Local speech-to-text is unavailable." });
+    }
+  }
+  if (request.method === "POST" && path === "/api/voice/speak") {
+    try {
+      const input = await body(request); const text = String(input.text || "").trim();
+      if (!text) throw typedError("There is no assistant reply to speak.", "TTS_EMPTY");
+      if (text.length > 4000) throw typedError("Text-to-speech input is too long.", "TTS_TOO_LONG");
+      return sendAudio(response, await synthesizeSpeech(text));
+    } catch (error) {
+      if (["TTS_NOT_CONFIGURED", "TTS_BAD_CONFIG"].includes(error.code)) return send(response, 409, { error: error.message });
+      if (["TTS_EMPTY", "TTS_TOO_LONG"].includes(error.code)) return send(response, 400, { error: error.message });
+      return send(response, 503, { error: error.message || "Local text-to-speech is unavailable." });
     }
   }
   if (request.method === "GET" && path === "/api/events") {

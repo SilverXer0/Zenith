@@ -36,6 +36,7 @@ To use private HTTPS on the Windows home server, run `scripts\start-zenith-tails
 - `DELETE /api/calendar/connection`
 - `GET /api/voice/status`
 - `POST /api/voice/transcribe` (authenticated, optional local speech-to-text)
+- `POST /api/voice/speak` (authenticated, optional local text-to-speech)
 - `GET /api/assistant/status`
 - `POST /api/assistant/chat` (authenticated, read-only task context)
 - `POST /api/assistant/actions` (authenticated, applies user-confirmed proposals)
@@ -67,3 +68,12 @@ $env:ZENITH_STT_ARGS='["scripts\whisper-transcribe.py","{input}"]'
 ```
 
 The adapter defaults to the `base.en` model on CUDA with FP16. Set `ZENITH_WHISPER_MODEL`, `ZENITH_WHISPER_DEVICE`, `ZENITH_WHISPER_COMPUTE_TYPE`, or `ZENITH_WHISPER_LANGUAGE` to adjust it. The first transcription downloads the selected model; subsequent transcription is local. `faster-whisper` supports GPU execution with `device="cuda"` and `compute_type="float16"`; its current Windows GPU requirements are documented in the project's [official README](https://github.com/SYSTRAN/faster-whisper#requirements).
+
+For local speech output, the included `scripts\pyttsx3-speak.py` adapter uses the Windows local speech engine and writes a temporary WAV file. Configure it alongside speech-to-text:
+
+```powershell
+$env:ZENITH_TTS_COMMAND=".venv\Scripts\python.exe"
+$env:ZENITH_TTS_ARGS='["scripts\pyttsx3-speak.py","{text}","{output}"]'
+```
+
+Assistant replies show a `Speak reply` control when text-to-speech is configured. Audio is generated on demand and is not stored by Zenith.

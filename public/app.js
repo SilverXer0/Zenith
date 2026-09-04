@@ -53,11 +53,13 @@ async function loadCalendar() {
 }
 let voiceRecorder = null;
 let voiceStream = null;
+let ttsReady = false;
 async function loadVoiceStatus() {
   try {
-    const { configured } = await api("/api/voice/status");
+    const { configured, ttsConfigured } = await api("/api/voice/status");
+    ttsReady = ttsConfigured;
     $("#voiceButton").hidden = !configured;
-    $("#voiceStatus").textContent = configured ? "Local voice input is ready." : "";
+    $("#voiceStatus").textContent = configured || ttsConfigured ? `${configured ? "Local voice input" : "Local voice replies"} is ready.` : "";
   } catch { $("#voiceButton").hidden = true; $("#voiceStatus").textContent = ""; }
 }
 async function toggleVoiceRecording() {
@@ -75,6 +77,18 @@ async function toggleVoiceRecording() {
     voiceRecorder.start(); button.textContent = "Stop recording"; $("#voiceStatus").textContent = "Recording… tap again when finished.";
   } catch { $("#voiceStatus").textContent = "Microphone access was not available."; }
 }
+async function speakAssistantReply(text, button) {
+  button.disabled = true; button.textContent = "Speaking…";
+  try {
+    const response = await fetch("/api/voice/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    if (!response.ok) throw new Error((await response.json()).error);
+    const audioUrl = URL.createObjectURL(await response.blob()); const audio = new Audio(audioUrl);
+    await new Promise((resolve, reject) => { audio.addEventListener("ended", resolve, { once: true }); audio.addEventListener("error", () => reject(new Error("The audio could not be played.")), { once: true }); audio.play().catch(reject); });
+    URL.revokeObjectURL(audioUrl);
+  } catch (error) { $("#voiceStatus").textContent = error.message; }
+  finally { button.disabled = false; button.textContent = "Speak reply"; }
+}
+function addSpeechControl(chat, text) { if (!ttsReady) return; const button = document.createElement("button"); button.type = "button"; button.className = "text-button voice-replay"; button.textContent = "Speak reply"; button.addEventListener("click", () => speakAssistantReply(text, button)); chat.append(button); }
 function actionLabel(action) { if (action.type === "create_task") return `Create “${action.title}”`; if (action.type === "complete_task") return "Mark task complete"; if (action.type === "delete_task") return "Delete task"; return `Update “${action.title || "task"}”`; }
 function addActionProposal(actions) { if (!actions?.length) return; const chat = $("#assistantChat"); const proposal = document.createElement("div"); proposal.className = "assistant-proposal"; const title = document.createElement("strong"); title.textContent = "Suggested changes"; proposal.append(title); const list = document.createElement("ul"); for (const action of actions) { const item = document.createElement("li"); item.textContent = actionLabel(action); list.append(item); } proposal.append(list); const confirm = document.createElement("button"); confirm.type = "button"; confirm.textContent = "Confirm changes"; confirm.addEventListener("click", async () => { confirm.disabled = true; $("#assistantError").textContent = "Applying changes…"; try { const result = await api("/api/assistant/actions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actions }) }); state.tasks = result.tasks; render(); proposal.remove(); $("#assistantError").textContent = "Changes applied."; } catch (error) { confirm.disabled = false; $("#assistantError").textContent = error.message; } }); proposal.append(confirm); chat.append(proposal); chat.scrollTop = chat.scrollHeight; }
 async function update(id, patch) { const { task } = await api(`/api/tasks/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }); state.tasks = state.tasks.map((existing) => existing.id === id ? task : existing); render(); }
@@ -96,6 +110,6 @@ function showAuth(setupRequired) { $("#authPanel").hidden = false; $("#manager")
 $("#authForm").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const mode = event.currentTarget.dataset.mode; $("#authError").textContent = ""; try { const session = await api(mode === "setup" ? "/api/auth/setup" : "/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); state.user = session.user; $("#authPanel").hidden = true; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadVoiceStatus(); } catch (error) { $("#authError").textContent = error.message; } });
 $("#logout").addEventListener("click", async () => { closeLiveUpdates(); await api("/api/auth/session", { method: "DELETE" }); state.user = null; state.tasks = []; $("#logout").hidden = true; $("#unloadModel").hidden = true; showAuth(false); $("#password").value = ""; });
 $("#unloadModel").addEventListener("click", async () => { const button = $("#unloadModel"); button.disabled = true; try { const result = await api("/api/assistant/unload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); $("#assistantStatus").textContent = result.unloaded ? "Local assistant released · VRAM available" : "Local assistant is not loaded"; } catch (error) { $("#assistantStatus").textContent = error.message; } finally { button.disabled = false; } });
-$("#assistantForm").addEventListener("submit", async (event) => { event.preventDefault(); const input = $("#assistantInput"); const message = input.value.trim(); if (!message) return; const chat = $("#assistantChat"); const userMessage = document.createElement("p"); userMessage.className = "assistant-message user-message"; userMessage.textContent = message; chat.append(userMessage); input.value = ""; $("#assistantError").textContent = "Thinking…"; try { const result = await api("/api/assistant/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history: state.assistantHistory }) }); const answer = document.createElement("p"); answer.className = "assistant-message"; answer.textContent = result.message; chat.append(answer); addActionProposal(result.actions); state.assistantHistory.push({ role: "user", content: message }, { role: "assistant", content: result.message }); $("#assistantError").textContent = result.model ? `Using ${result.model}` : ""; chat.scrollTop = chat.scrollHeight; } catch (error) { $("#assistantError").textContent = error.message === "Local assistant is unavailable." ? "Ollama is offline. Your tasks are still available." : error.message; } });
+$("#assistantForm").addEventListener("submit", async (event) => { event.preventDefault(); const input = $("#assistantInput"); const message = input.value.trim(); if (!message) return; const chat = $("#assistantChat"); const userMessage = document.createElement("p"); userMessage.className = "assistant-message user-message"; userMessage.textContent = message; chat.append(userMessage); input.value = ""; $("#assistantError").textContent = "Thinking…"; try { const result = await api("/api/assistant/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history: state.assistantHistory }) }); const answer = document.createElement("p"); answer.className = "assistant-message"; answer.textContent = result.message; chat.append(answer); addSpeechControl(chat, result.message); addActionProposal(result.actions); state.assistantHistory.push({ role: "user", content: message }, { role: "assistant", content: result.message }); $("#assistantError").textContent = result.model ? `Using ${result.model}` : ""; chat.scrollTop = chat.scrollHeight; } catch (error) { $("#assistantError").textContent = error.message === "Local assistant is unavailable." ? "Ollama is offline. Your tasks are still available." : error.message; } });
 async function start() { const existing = await fetch("/api/auth/session"); if (existing.ok) { const session = await existing.json(); state.user = session.user; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadVoiceStatus(); return; } const { setupRequired } = await api("/api/auth/status"); showAuth(setupRequired); }
 start().catch((error) => { showAuth(false); $("#authError").textContent = error.message; });
