@@ -150,6 +150,30 @@ class GoogleCalendar:
             pass
         return result
 
+    def assistant_context(self, user_id: str) -> str:
+        if not self.configured():
+            return "Google Calendar is not configured."
+        if not self.database.calendar_account(user_id):
+            return "Google Calendar is not connected."
+        try:
+            events = self.events(user_id)
+        except (ApiError, RemoteError):
+            return "Google Calendar is connected but temporarily unavailable."
+        if not events:
+            return "No upcoming Google Calendar events in the next seven days."
+
+        def clean(value, limit):
+            return str(value).replace("\r", " ").replace("\n", " ")[:limit]
+
+        lines = []
+        for event in events[:50]:
+            title = clean(event.get("title") or "Untitled event", 200)
+            start = clean(event.get("start") or "time unavailable", 80)
+            end = f" to {clean(event['end'], 80)}" if event.get("end") else ""
+            location = f" | {clean(event['location'], 200)}" if event.get("location") else ""
+            lines.append(f"- {title} | {start}{end}{location}")
+        return "\n".join(lines)
+
     def disconnect(self, user_id: str):
         self.database.delete_calendar_connection(user_id)
 

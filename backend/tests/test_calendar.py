@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import create_app
 from backend.auth import COOKIE_NAME, password_hash
-from backend.calendar import CALENDAR_SCOPE, calendar_range, instant
+from backend.calendar import CALENDAR_SCOPE, GoogleCalendar, calendar_range, instant
 from backend.database import timestamp
 
 
@@ -228,6 +228,9 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(morning["calendar"], {"connected": True, "available": True, "events": expected})
         self.assertEqual(morning["summary"], "2 calendar events")
         self.assertEqual(weekly["calendar"], {"connected": True, "available": True, "events": expected})
+        assistant_context = GoogleCalendar(self.database).assistant_context(self.user_id)
+        self.assertIn("Focus time", assistant_context)
+        self.assertIn("2026-09-04T18:00:00-07:00", assistant_context)
         self.assertEqual(self.node_snapshot()["calendarStatus"], status)
         self.assertEqual(self.client.delete("/api/calendar/connection").status_code, 204)
         self.assertEqual(self.client.get("/api/calendar/status").json()["connected"], False)

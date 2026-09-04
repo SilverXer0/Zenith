@@ -148,37 +148,40 @@ class Database:
 
     def save_task(self, user_id: str, patch: dict, task_id: str | None = None) -> dict:
         with self.connection(write=True) as connection:
-            if task_id:
-                row = connection.execute("SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)).fetchone()
-                if not row:
-                    raise ApiError(404, "Task not found.")
-                existing = task_from_row(row)
-            else:
-                existing = {"id": str(uuid4()), "title": "", "notes": "", "project": "Inbox", "priority": "medium",
-                            "dueDate": None, "completed": False, "completedAt": None, "createdAt": timestamp()}
-            task = {**existing}
-            for key in ("title", "notes", "project", "priority"):
-                if patch.get(key) is not None:
-                    task[key] = patch[key]
-            if not task["title"]:
-                raise ApiError(400, "A task needs a title.")
-            task["project"] = task["project"] or "Inbox"
-            for key in ("dueDate", "completed"):
-                if key in patch:
-                    task[key] = patch[key]
-            task["updatedAt"] = timestamp()
-            completion = task["completed"] and not existing["completed"]
-            task["completedAt"] = (task["updatedAt"] if completion else existing["completedAt"]) if task["completed"] else None
-            values = (task["title"], task["notes"], task["project"], task["priority"], task["dueDate"], int(task["completed"]), task["completedAt"], task["updatedAt"], task["id"], user_id)
-            if task_id:
-                connection.execute("""UPDATE tasks SET title=?, notes=?, project=?, priority=?, due_date=?,
-                    completed=?, completed_at=?, updated_at=? WHERE id=? AND user_id=?""", values)
-            else:
-                connection.execute("""INSERT INTO tasks (title, notes, project, priority, due_date, completed,
-                    completed_at, updated_at, id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (*values, task["createdAt"]))
-            if completion:
-                self._record_completion(connection, user_id, task)
-            return task
+            return self._save_task(connection, user_id, patch, task_id)
+
+    def _save_task(self, connection, user_id: str, patch: dict, task_id: str | None = None) -> dict:
+        if task_id:
+            row = connection.execute("SELECT * FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id)).fetchone()
+            if not row:
+                raise ApiError(404, "Task not found.")
+            existing = task_from_row(row)
+        else:
+            existing = {"id": str(uuid4()), "title": "", "notes": "", "project": "Inbox", "priority": "medium",
+                        "dueDate": None, "completed": False, "completedAt": None, "createdAt": timestamp()}
+        task = {**existing}
+        for key in ("title", "notes", "project", "priority"):
+            if patch.get(key) is not None:
+                task[key] = patch[key]
+        if not task["title"]:
+            raise ApiError(400, "A task needs a title.")
+        task["project"] = task["project"] or "Inbox"
+        for key in ("dueDate", "completed"):
+            if key in patch:
+                task[key] = patch[key]
+        task["updatedAt"] = timestamp()
+        completion = task["completed"] and not existing["completed"]
+        task["completedAt"] = (task["updatedAt"] if completion else existing["completedAt"]) if task["completed"] else None
+        values = (task["title"], task["notes"], task["project"], task["priority"], task["dueDate"], int(task["completed"]), task["completedAt"], task["updatedAt"], task["id"], user_id)
+        if task_id:
+            connection.execute("""UPDATE tasks SET title=?, notes=?, project=?, priority=?, due_date=?,
+                completed=?, completed_at=?, updated_at=? WHERE id=? AND user_id=?""", values)
+        else:
+            connection.execute("""INSERT INTO tasks (title, notes, project, priority, due_date, completed,
+                completed_at, updated_at, id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (*values, task["createdAt"]))
+        if completion:
+            self._record_completion(connection, user_id, task)
+        return task
 
     def _record_completion(self, connection, user_id, task):
         connection.execute("""INSERT INTO task_completion_events
@@ -190,6 +193,26 @@ class Database:
             result = connection.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, user_id))
             if not result.rowcount:
                 raise ApiError(404, "Task not found.")
+
+    def apply_assistant_actions(self, user_id: str, actions: list[dict]) -> list[dict]:
+        with self.connection(write=True) as connection:
+            current = {task["id"] for task in self._list_tasks(connection, user_id)}
+            targets = [action.get("taskId") for action in actions if action["type"] != "create_task"]
+            if any(target not in current for target in targets) or len(targets) != len(set(targets)):
+                raise ApiError(409, "The proposed task changes are no longer valid. Ask the assistant again.")
+            for action in actions:
+                kind = action["type"]
+                if kind == "create_task":
+                    self._save_task(connection, user_id, {key: value for key, value in action.items() if key != "type"})
+                elif kind == "delete_task":
+                    connection.execute("DELETE FROM tasks WHERE id=? AND user_id=?", (action["taskId"], user_id))
+                elif kind == "complete_task":
+                    self._save_task(connection, user_id, {"completed": True}, action["taskId"])
+                else:
+                    self._save_task(connection, user_id,
+                                    {key: value for key, value in action.items() if key not in ("type", "taskId")},
+                                    action["taskId"])
+            return self._list_tasks(connection, user_id)
 
     def list_memory(self, user_id: str) -> list[dict]:
         with self.connection() as connection:

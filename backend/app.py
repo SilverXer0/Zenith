@@ -12,11 +12,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
 from .auth import Auth, COOKIE_NAME, SESSION_SECONDS, token_hash
+from .assistant import LocalAssistant
 from .calendar import GoogleCalendar
 from .database import Database
 from .errors import ApiError
 from .events import TaskEvents, TaskEventResponse
-from .models import Credentials, MemoryPatch, TaskPatch
+from .models import (AssistantActionsInput, AssistantChatInput, AssistantUnloadInput,
+                     Credentials, MemoryPatch, TaskPatch)
 from .planning import Planning, planning_date, weekly_start
 
 
@@ -27,6 +29,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     auth = Auth(database)
     events = TaskEvents()
     google_calendar = GoogleCalendar(database)
+    assistant = LocalAssistant(database, google_calendar)
     planning = Planning(database, google_calendar)
     secure_cookie = os.environ.get("ZENITH_COOKIE_SECURE", "").lower() in ("1", "true")
 
@@ -86,6 +89,10 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.get("/api/auth/status")
     def auth_status():
         return {"setupRequired": auth.setup_required()}
+
+    @app.get("/api/assistant/status")
+    def assistant_status():
+        return assistant.status()
 
     @app.get("/api/calendar/oauth/callback")
     def calendar_callback(state: str | None = None, code: str | None = None,
@@ -158,6 +165,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def disconnect_calendar(current_user: dict = Depends(user)):
         google_calendar.disconnect(current_user["id"])
         return Response(status_code=204)
+
+    @app.post("/api/assistant/chat")
+    def assistant_chat(body: AssistantChatInput, current_user: dict = Depends(user)):
+        return assistant.chat(current_user["id"], body)
+
+    @app.post("/api/assistant/actions")
+    def assistant_actions(body: AssistantActionsInput, current_user: dict = Depends(user)):
+        tasks = assistant.apply_actions(current_user["id"], body.actions)
+        events.publish(current_user["id"])
+        return {"tasks": tasks}
+
+    @app.post("/api/assistant/unload")
+    def assistant_unload(body: AssistantUnloadInput, current_user: dict = Depends(user)):
+        return assistant.unload(body)
 
     @app.get("/api/memory")
     def memories(current_user: dict = Depends(user)):

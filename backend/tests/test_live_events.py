@@ -181,6 +181,13 @@ class LiveEventTests(unittest.TestCase):
         for stream in (first, second):
             stream.event("tasks_changed")
         self.assertEqual(self.api("GET", "/api/tasks", cookie=second_cookie)[1]["tasks"], [])
+        status, body, _ = self.api("POST", "/api/assistant/actions",
+                                   {"actions": [{"type": "create_task", "title": "Confirmed on phone"}]},
+                                   second_cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["tasks"][0]["title"], "Confirmed on phone")
+        for stream in (first, second):
+            stream.event("tasks_changed")
 
     def test_changes_are_private_to_the_owner(self):
         with self.app.state.database.connection(write=True) as connection:
