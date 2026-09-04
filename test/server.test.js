@@ -10,6 +10,7 @@ let baseUrl;
 let dataDir;
 let localCookie;
 let migratedTask;
+let calendarMock;
 
 const legacyTask = {
   id: "legacy-task",
@@ -127,6 +128,43 @@ test("Zenith API integration", async () => {
   const reloadedTasks = await request("/api/tasks", { headers: { Cookie: reLoginCookie } });
   assert.equal(reloadedTasks.body.tasks.length, 2);
 
+  const calendarUnconfigured = await request("/api/calendar/status", { headers: { Cookie: reLoginCookie } });
+  assert.deepEqual(calendarUnconfigured.body, { configured: false, connected: false, calendarName: null, connectedAt: null });
+  const calendarEventsUnconfigured = await request("/api/calendar/events", { headers: { Cookie: reLoginCookie } });
+  assert.equal(calendarEventsUnconfigured.response.status, 409);
+
+  calendarMock = createServer(async (calendarRequest, calendarResponse) => {
+    let raw = "";
+    for await (const chunk of calendarRequest) raw += chunk;
+    calendarResponse.setHeader("Content-Type", "application/json");
+    if (calendarRequest.url === "/token") { calendarResponse.end(JSON.stringify({ access_token: "calendar-access", refresh_token: "calendar-refresh", expires_in: 3600 })); return; }
+    if (calendarRequest.url === "/calendar/v3/calendars/primary") { calendarResponse.end(JSON.stringify({ summary: "Personal Calendar" })); return; }
+    if (calendarRequest.url.startsWith("/calendar/v3/calendars/primary/events")) { calendarResponse.end(JSON.stringify({ items: [{ id: "event-1", summary: "Focus time", start: { dateTime: "2026-09-04T18:00:00-07:00" }, end: { dateTime: "2026-09-04T19:00:00-07:00" }, location: "Home", status: "confirmed" }] })); return; }
+    calendarResponse.statusCode = 404;
+    calendarResponse.end(JSON.stringify({ error: "not found" }));
+  });
+  const calendarAddress = await new Promise((resolve, reject) => { calendarMock.once("error", reject); calendarMock.listen(0, "127.0.0.1", () => resolve(calendarMock.address())); });
+  process.env.GOOGLE_CLIENT_ID = "test-client";
+  process.env.GOOGLE_CLIENT_SECRET = "test-secret";
+  process.env.GOOGLE_REDIRECT_URI = `${baseUrl}/api/calendar/oauth/callback`;
+  process.env.GOOGLE_TOKEN_URL = `http://127.0.0.1:${calendarAddress.port}/token`;
+  process.env.GOOGLE_CALENDAR_URL = `http://127.0.0.1:${calendarAddress.port}/calendar/v3`;
+  const calendarConnect = await request("/api/calendar/connect", { headers: { Cookie: reLoginCookie } });
+  assert.equal(calendarConnect.response.status, 302);
+  const authorization = new URL(calendarConnect.response.headers.location);
+  assert.equal(authorization.searchParams.get("client_id"), "test-client");
+  assert.equal(authorization.searchParams.get("scope"), "https://www.googleapis.com/auth/calendar.readonly");
+  const calendarCallback = await request(`/api/calendar/oauth/callback?state=${authorization.searchParams.get("state")}&code=mock-code`);
+  assert.equal(calendarCallback.response.status, 302);
+  assert.equal(calendarCallback.response.headers.location, "/?calendar=connected");
+  const calendarConnected = await request("/api/calendar/status", { headers: { Cookie: reLoginCookie } });
+  assert.equal(calendarConnected.body.connected, true);
+  assert.equal(calendarConnected.body.calendarName, "Personal Calendar");
+  const calendarEvents = await request("/api/calendar/events?start=2026-09-04T00:00:00Z&end=2026-09-05T00:00:00Z", { headers: { Cookie: reLoginCookie } });
+  assert.deepEqual(calendarEvents.body.events, [{ id: "event-1", title: "Focus time", start: "2026-09-04T18:00:00-07:00", end: "2026-09-04T19:00:00-07:00", allDay: false, location: "Home", status: "confirmed" }]);
+  const disconnected = await request("/api/calendar/connection", { method: "DELETE", headers: { Cookie: reLoginCookie } });
+  assert.equal(disconnected.response.status, 204);
+
   const unauthenticatedEvents = await request("/api/events");
   assert.equal(unauthenticatedEvents.response.status, 401);
   const eventStream = await openEventStream(reLoginCookie);
@@ -191,8 +229,14 @@ test("Zenith API integration", async () => {
 
   await new Promise((resolve) => app.close(resolve));
   await new Promise((resolve) => ollamaMock.close(resolve));
+  await new Promise((resolve) => calendarMock.close(resolve));
   await rm(dataDir, { recursive: true, force: true });
   delete process.env.ZENITH_DATA_DIR;
   delete process.env.OLLAMA_URL;
   delete process.env.OLLAMA_MODEL;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
+  delete process.env.GOOGLE_REDIRECT_URI;
+  delete process.env.GOOGLE_TOKEN_URL;
+  delete process.env.GOOGLE_CALENDAR_URL;
 });

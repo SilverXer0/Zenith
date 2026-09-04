@@ -34,8 +34,11 @@ async function initializeDatabase() {
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT 'Inbox', priority TEXT NOT NULL DEFAULT 'medium', due_date TEXT, completed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_accounts (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, access_token TEXT, refresh_token TEXT NOT NULL, token_expires_at TEXT, calendar_name TEXT, connected_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_oauth_states (state TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS tasks_user_updated ON tasks(user_id, updated_at);
-CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);`);
+CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expires_at);`);
   const userColumns = await runSql("PRAGMA table_info(users)", true);
   if (!userColumns.some((column) => column.name === "password_hash")) {
     await runSql("ALTER TABLE users ADD COLUMN password_hash TEXT");
@@ -146,6 +149,69 @@ async function ollamaJson(path, options = {}) {
   const baseUrl = process.env.OLLAMA_URL || "http://127.0.0.1:11434"; const target = new URL(`${baseUrl}${path}`); const transport = target.protocol === "https:" ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => { const request = transport(target, { method: options.method || "GET", headers: options.headers || {} }, (response) => { let raw = ""; response.setEncoding("utf8"); response.on("data", (chunk) => { raw += chunk; }); response.on("end", () => { if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(`Ollama returned ${response.statusCode}.`)); try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error("Ollama returned invalid JSON.")); } }); }); request.setTimeout(options.timeout || 1000, () => request.destroy(new Error("Ollama request timed out."))); request.on("error", reject); if (options.body) request.write(options.body); request.end(); });
 }
+async function remoteJson(target, options = {}) {
+  const url = new URL(target); const transport = url.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => { const request = transport(url, { method: options.method || "GET", headers: options.headers || {} }, (response) => { let raw = ""; response.setEncoding("utf8"); response.on("data", (chunk) => { raw += chunk; }); response.on("end", () => { let parsed = {}; try { parsed = raw ? JSON.parse(raw) : {}; } catch { const error = new Error("Remote service returned invalid JSON."); error.status = response.statusCode; return reject(error); } if (response.statusCode < 200 || response.statusCode >= 300) { const error = new Error(`Remote service returned ${response.statusCode}.`); error.status = response.statusCode; error.body = parsed; return reject(error); } resolve(parsed); }); }); request.setTimeout(options.timeout || 10000, () => request.destroy(new Error("Remote service request timed out."))); request.on("error", reject); if (options.body) request.write(options.body); request.end(); });
+}
+const calendarScope = "https://www.googleapis.com/auth/calendar.readonly";
+function googleConfigured() { return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET); }
+function googleRedirectUri() { return process.env.GOOGLE_REDIRECT_URI || `http://127.0.0.1:${port}/api/calendar/oauth/callback`; }
+function googleTokenUrl() { return process.env.GOOGLE_TOKEN_URL || "https://oauth2.googleapis.com/token"; }
+function googleCalendarBaseUrl() { return (process.env.GOOGLE_CALENDAR_URL || "https://www.googleapis.com/calendar/v3").replace(/\/$/, ""); }
+function googleCalendarUrl(path) { return `${googleCalendarBaseUrl()}${path}`; }
+function calendarError(message, code) { const error = new Error(message); error.code = code; return error; }
+async function calendarAccount(userId) {
+  const rows = await runSql(`SELECT user_id AS userId, access_token AS accessToken, refresh_token AS refreshToken, token_expires_at AS tokenExpiresAt, calendar_name AS calendarName, connected_at AS connectedAt FROM calendar_accounts WHERE user_id=${sqlQuote(userId)} LIMIT 1`, true);
+  return rows[0] || null;
+}
+async function calendarAccessToken(userId, forceRefresh = false) {
+  const account = await calendarAccount(userId);
+  if (!account) throw calendarError("Google Calendar is not connected.", "CALENDAR_NOT_CONNECTED");
+  const expiresAt = account.tokenExpiresAt ? Date.parse(account.tokenExpiresAt) : 0;
+  if (!forceRefresh && account.accessToken && expiresAt > Date.now() + 60000) return account.accessToken;
+  if (!account.refreshToken) throw calendarError("Google Calendar authorization has expired. Please reconnect it.", "CALENDAR_REAUTH_REQUIRED");
+  let token;
+  try {
+    token = await remoteJson(googleTokenUrl(), { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, refresh_token: account.refreshToken, grant_type: "refresh_token" }).toString() });
+  } catch (error) {
+    if (error.status === 400 || error.status === 401) throw calendarError("Google Calendar authorization has expired. Please reconnect it.", "CALENDAR_REAUTH_REQUIRED");
+    throw error;
+  }
+  if (!token.access_token) throw calendarError("Google did not return a usable Calendar access token.", "CALENDAR_REAUTH_REQUIRED");
+  const expires = new Date(Date.now() + Math.max(60, Number(token.expires_in) || 3600) * 1000).toISOString();
+  await runSql(`UPDATE calendar_accounts SET access_token=${sqlQuote(token.access_token)}, token_expires_at=${sqlQuote(expires)}, refresh_token=${sqlQuote(token.refresh_token || account.refreshToken)} WHERE user_id=${sqlQuote(userId)}`);
+  return token.access_token;
+}
+function calendarRange(url) {
+  const now = new Date(); const defaultStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())); const defaultEnd = new Date(defaultStart.getTime() + 7 * 86400000);
+  const start = new Date(url.searchParams.get("start") || defaultStart.toISOString()); const end = new Date(url.searchParams.get("end") || defaultEnd.toISOString());
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) throw calendarError("Calendar start and end must be valid, and end must be after start.", "CALENDAR_BAD_RANGE");
+  return { start, end };
+}
+function calendarEventFromGoogle(event) { const allDay = Boolean(event.start?.date && !event.start?.dateTime); return { id: event.id, title: event.summary || "Untitled event", start: event.start?.dateTime || event.start?.date || null, end: event.end?.dateTime || event.end?.date || null, allDay, location: event.location || null, status: event.status || "confirmed" }; }
+async function listCalendarEvents(userId, range) {
+  let accessToken = await calendarAccessToken(userId);
+  const fetchEvents = () => { const endpoint = new URL(googleCalendarUrl("/calendars/primary/events")); endpoint.searchParams.set("singleEvents", "true"); endpoint.searchParams.set("orderBy", "startTime"); endpoint.searchParams.set("timeMin", range.start.toISOString()); endpoint.searchParams.set("timeMax", range.end.toISOString()); endpoint.searchParams.set("maxResults", "100"); return remoteJson(endpoint, { headers: { Authorization: `Bearer ${accessToken}` } }); };
+  try { return (await fetchEvents()).items?.map(calendarEventFromGoogle) || []; } catch (error) { if (error.status !== 401) throw error; accessToken = await calendarAccessToken(userId, true); return (await fetchEvents()).items?.map(calendarEventFromGoogle) || []; }
+}
+async function completeCalendarCallback(url, response) {
+  const state = url.searchParams.get("state"); const code = url.searchParams.get("code");
+  if (!state || !code) return send(response, 400, { error: "Google Calendar authorization was incomplete." });
+  const rows = await runSql(`SELECT state, user_id AS userId, expires_at AS expiresAt FROM calendar_oauth_states WHERE state=${sqlQuote(state)} LIMIT 1`, true);
+  await runSql(`DELETE FROM calendar_oauth_states WHERE state=${sqlQuote(state)}`);
+  if (!rows[0] || Date.parse(rows[0].expiresAt) <= Date.now()) return send(response, 400, { error: "That Google Calendar authorization link has expired. Please try again." });
+  let token;
+  try {
+    token = await remoteJson(googleTokenUrl(), { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET, redirect_uri: googleRedirectUri(), grant_type: "authorization_code" }).toString() });
+  } catch { return send(response, 502, { error: "Google Calendar authorization could not be completed." }); }
+  const existing = await calendarAccount(rows[0].userId); const refreshToken = token.refresh_token || existing?.refreshToken;
+  if (!token.access_token || !refreshToken) return send(response, 502, { error: "Google did not provide a reusable Calendar authorization. Please try connecting again." });
+  let calendarName = "Google Calendar";
+  try { const primary = await remoteJson(googleCalendarUrl("/calendars/primary"), { headers: { Authorization: `Bearer ${token.access_token}` } }); calendarName = primary.summary || calendarName; } catch { /* calendar name is optional */ }
+  const expires = new Date(Date.now() + Math.max(60, Number(token.expires_in) || 3600) * 1000).toISOString();
+  await runSql(`INSERT OR REPLACE INTO calendar_accounts (user_id,access_token,refresh_token,token_expires_at,calendar_name,connected_at) VALUES (${sqlQuote(rows[0].userId)},${sqlQuote(token.access_token)},${sqlQuote(refreshToken)},${sqlQuote(expires)},${sqlQuote(calendarName)},${sqlQuote(new Date().toISOString())})`);
+  response.writeHead(302, { Location: "/?calendar=connected" }); response.end();
+}
 async function ollamaStatus() { try { const { models = [] } = await ollamaJson("/api/tags", { timeout: 800 }); let running = []; try { running = (await ollamaJson("/api/ps", { timeout: 800 })).models || []; } catch { /* model listing is optional */ } const model = process.env.OLLAMA_MODEL || models[0]?.name || null; const loadedModel = running[0]?.name || running[0]?.model || null; return { enabled: true, reachable: true, model, loaded: Boolean(model && running.some((item) => item.name === model || item.model === model)), loadedModel }; } catch { return { enabled: true, reachable: false, model: process.env.OLLAMA_MODEL || null, loaded: false, loadedModel: null }; } }
 async function assistantChat(userId, input) {
   const message = String(input.message || "").trim();
@@ -188,6 +254,7 @@ async function api(request, response, url) {
     const rows = await runSql("SELECT password_hash AS passwordHash FROM users ORDER BY created_at LIMIT 1", true);
     return send(response, 200, { setupRequired: !rows[0]?.passwordHash });
   }
+  if (request.method === "GET" && path === "/api/calendar/oauth/callback") return completeCalendarCallback(url, response);
   if (request.method === "POST" && path === "/api/auth/setup") {
     const { displayName, password } = credentials(await body(request));
     const rows = await runSql("SELECT id, password_hash AS passwordHash FROM users ORDER BY created_at LIMIT 1", true);
@@ -207,6 +274,29 @@ async function api(request, response, url) {
   if (request.method === "GET" && path === "/api/auth/session") { const user = await requireUser(request, response); return user && send(response, 200, { user }); }
   if (request.method === "DELETE" && path === "/api/auth/session") { const token = cookieToken(request); if (token) await runSql(`DELETE FROM sessions WHERE token_hash=${sqlQuote(tokenHash(token))}`); return send(response, 204, {}); }
   const user = await requireUser(request, response); if (!user) return;
+  if (request.method === "GET" && path === "/api/calendar/status") {
+    const account = await calendarAccount(user.id);
+    return send(response, 200, { configured: googleConfigured(), connected: Boolean(account), calendarName: account?.calendarName || null, connectedAt: account?.connectedAt || null });
+  }
+  if (request.method === "GET" && path === "/api/calendar/connect") {
+    if (!googleConfigured()) return send(response, 409, { error: "Google Calendar is not configured on this Zenith server." });
+    const state = randomBytes(24).toString("hex");
+    await runSql(`DELETE FROM calendar_oauth_states WHERE expires_at <= datetime('now'); INSERT INTO calendar_oauth_states (state,user_id,expires_at) VALUES (${sqlQuote(state)},${sqlQuote(user.id)},${sqlQuote(new Date(Date.now() + 10 * 60000).toISOString())})`);
+    const authorization = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    authorization.search = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: googleRedirectUri(), response_type: "code", access_type: "offline", prompt: "consent", scope: calendarScope, state }).toString();
+    response.writeHead(302, { Location: authorization.toString() }); response.end();
+    return;
+  }
+  if (request.method === "GET" && path === "/api/calendar/events") {
+    if (!googleConfigured()) return send(response, 409, { error: "Google Calendar is not configured on this Zenith server." });
+    try { return send(response, 200, { events: await listCalendarEvents(user.id, calendarRange(url)) }); } catch (error) {
+      if (error.code === "CALENDAR_NOT_CONNECTED") return send(response, 409, { error: error.message });
+      if (error.code === "CALENDAR_REAUTH_REQUIRED") return send(response, 401, { error: error.message });
+      if (error.code === "CALENDAR_BAD_RANGE") return send(response, 400, { error: error.message });
+      return send(response, 503, { error: "Google Calendar is temporarily unavailable." });
+    }
+  }
+  if (request.method === "DELETE" && path === "/api/calendar/connection") { await runSql(`DELETE FROM calendar_accounts WHERE user_id=${sqlQuote(user.id)}; DELETE FROM calendar_oauth_states WHERE user_id=${sqlQuote(user.id)}`); return send(response, 204, {}); }
   if (request.method === "GET" && path === "/api/events") {
     response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
     response.write("event: ready\ndata: {}\n\n");

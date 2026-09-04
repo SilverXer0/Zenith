@@ -24,6 +24,10 @@ For the intended Windows home-server setup, install Tailscale on the Windows PC 
 - `POST /api/auth/setup` (first launch), `POST /api/auth/session`, `GET /api/auth/session`, `DELETE /api/auth/session`
 - `GET /api/health`
 - `GET /api/events` (authenticated task-change stream)
+- `GET /api/calendar/status`, `GET /api/calendar/connect`
+- `GET /api/calendar/oauth/callback` (Google OAuth callback)
+- `GET /api/calendar/events` (authenticated, read-only upcoming events)
+- `DELETE /api/calendar/connection`
 - `GET /api/assistant/status`
 - `POST /api/assistant/chat` (authenticated, read-only task context)
 - `POST /api/assistant/actions` (authenticated, applies user-confirmed proposals)
@@ -40,3 +44,7 @@ node scripts\reset-zenith-passphrase.js
 ```
 
 The local tool displays the existing account name, asks for an explicit `RESET` confirmation, changes only the passphrase, and invalidates old sessions. It does not modify tasks. The new passphrase is entered visibly in the PowerShell window, so close the window afterward.
+
+### Google Calendar
+
+Calendar is optional. To enable it, create a Google Cloud OAuth web application with the Google Calendar API enabled, then set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` on the Windows Zenith server. `GOOGLE_REDIRECT_URI` can be set when the callback must use a specific address; otherwise the local callback defaults to `http://127.0.0.1:3000/api/calendar/oauth/callback`, so start authorization from the Windows PC. Keep the client secret outside the repository. Zenith requests the read-only Calendar scope, stores the connection in SQLite, refreshes access tokens as needed, and exposes only upcoming event details to the UI. If these settings are absent, tasks and the rest of Zenith continue working normally.
