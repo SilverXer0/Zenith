@@ -205,6 +205,7 @@ test("Zenith API integration", async () => {
   eventStream.request.destroy();
 
   let receivedChat;
+  let assistantActionsResponse = [{ type: "create_task", title: "Assistant-created task", project: "Inbox", priority: "low" }];
   let unloadRequest;
   const ollamaMock = createServer(async (ollamaRequest, ollamaResponse) => {
     let raw = "";
@@ -214,7 +215,7 @@ test("Zenith API integration", async () => {
     if (ollamaRequest.url === "/api/generate") { unloadRequest = JSON.parse(raw); ollamaResponse.setHeader("Content-Type", "application/json"); ollamaResponse.end(JSON.stringify({ done: true })); return; }
     receivedChat = JSON.parse(raw);
     ollamaResponse.setHeader("Content-Type", "application/json");
-    ollamaResponse.end(JSON.stringify({ message: { content: JSON.stringify({ reply: "Focus on the private task first.", actions: [{ type: "create_task", title: "Assistant-created task", project: "Inbox", priority: "low" }] }) } }));
+    ollamaResponse.end(JSON.stringify({ message: { content: JSON.stringify({ reply: "Focus on the private task first.", actions: assistantActionsResponse }) } }));
   });
   const ollamaAddress = await new Promise((resolve, reject) => { ollamaMock.once("error", reject); ollamaMock.listen(0, "127.0.0.1", () => resolve(ollamaMock.address())); });
   process.env.OLLAMA_URL = `http://127.0.0.1:${ollamaAddress.port}`;
@@ -226,6 +227,11 @@ test("Zenith API integration", async () => {
   assert.match(receivedChat.messages[0].content, /private task/i);
   assert.match(receivedChat.messages[0].content, /Focus time/i);
   assert.equal(receivedChat.messages.at(-1).content, "What should I focus on?");
+  assistantActionsResponse = [{ type: "complete_task", taskId: created.body.task.id }];
+  const existingTaskAction = await request("/api/assistant/chat", jsonOptions("POST", { message: "Mark the edited task complete" }, reLoginCookie));
+  assert.equal(existingTaskAction.response.status, 200);
+  assert.deepEqual(existingTaskAction.body.actions, [{ type: "complete_task", taskId: created.body.task.id }]);
+  assistantActionsResponse = [{ type: "create_task", title: "Assistant-created task", project: "Inbox", priority: "low" }];
   const invalidAction = await request("/api/assistant/actions", jsonOptions("POST", { actions: [{ type: "delete_task", taskId: "not-your-task" }] }, reLoginCookie));
   assert.equal(invalidAction.response.status, 409);
   const confirmed = await request("/api/assistant/actions", jsonOptions("POST", { actions: assistant.body.actions }, reLoginCookie));

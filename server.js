@@ -267,7 +267,7 @@ async function assistantChat(userId, input) {
   const message = String(input.message || "").trim();
   if (!message) throw new Error("Ask the local assistant a question.");
   if (message.length > 4000) throw new Error("Keep assistant messages under 4,000 characters.");
-  const rows = await runSql(`SELECT title,notes,project,priority,due_date AS dueDate,completed FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC LIMIT 100`, true);
+  const rows = await runSql(`SELECT id,title,notes,project,priority,due_date AS dueDate,completed FROM tasks WHERE user_id=${sqlQuote(userId)} ORDER BY completed, due_date IS NULL, due_date, updated_at DESC LIMIT 100`, true);
   const context = rows.length ? rows.map((task, index) => `${index + 1}. (${task.id}) [${task.completed ? "done" : "open"}] ${task.title} — ${task.project}, ${task.priority} priority${task.dueDate ? `, due ${task.dueDate}` : ""}${task.notes ? ` — ${task.notes.slice(0, 500)}` : ""}`).join("\n") : "No tasks are currently saved.";
   const calendarContext = await assistantCalendarContext(userId);
   const history = Array.isArray(input.history) ? input.history.filter((item) => ["user", "assistant"].includes(item?.role) && typeof item.content === "string").slice(-8).map((item) => ({ role: item.role, content: item.content.slice(0, 2000) })) : [];
