@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #20231f;
+  --muted: #6e746b;
+  --paper: #f6f5ef;
+  --card: rgba(255, 255, 252, 0.88);
+  --line: #e3e3d9;
+  --accent: #d96745;
+  --accent-dark: #b94c2f;
+  --sage: #dce5d9;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-width: 320px;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(210, 224, 203, 0.58), transparent 29rem),
+    var(--paper);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: wait; opacity: 0.56; }
+
+.shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 30px 0 64px; }
+.eyebrow { color: var(--accent-dark); font-size: 0.69rem; font-weight: 800; letter-spacing: 0.18em; }
+.muted { color: var(--muted); }
+.surface { border: 1px solid var(--line); border-radius: 22px; background: var(--card); box-shadow: 0 20px 50px rgba(64, 60, 42, 0.07); }
+.field { width: 100%; border: 1px solid #d7d8cd; border-radius: 12px; background: rgba(255,255,255,0.72); padding: 11px 13px; color: var(--ink); outline: none; }
+.field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(217, 103, 69, 0.14); }
+.primary-button { border: 0; border-radius: 12px; background: var(--accent); color: white; padding: 11px 16px; font-weight: 750; transition: background .18s, transform .18s; }
+.primary-button:hover { background: var(--accent-dark); transform: translateY(-1px); }
+.quiet-button { border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink); padding: 8px 11px; font-size: .86rem; font-weight: 700; }
+.quiet-button:hover { border-color: #b5b9aa; background: rgba(255,255,255,.6); }
+.danger-button { border: 0; background: transparent; color: #a34c3b; padding: 7px; font-size: .82rem; font-weight: 700; }
+.danger-button:hover { color: #762f23; }
+.error { min-height: 1.2rem; color: #a33b2c; font-size: .84rem; }
+
+@media (max-width: 720px) {
+  .shell { width: min(100% - 22px, 620px); padding-top: 18px; }
+  .surface { border-radius: 17px; }
+}

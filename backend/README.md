@@ -30,6 +30,8 @@ Calendar remains optional. If client settings are absent, Core starts normally, 
 
 For development, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. The callback defaults to `http://127.0.0.1:8000/api/calendar/oauth/callback`; set `GOOGLE_REDIRECT_URI` to the exact authorized HTTPS callback for Tailscale or a frontend proxy. `GOOGLE_TOKEN_URL` and `GOOGLE_CALENDAR_URL` exist only for isolated compatibility tests and should retain their defaults in normal use. The working Node deployment and its current port-3000 callback are unchanged by this migration slice.
 
+When the frontend runs separately during development, set `ZENITH_ALLOWED_ORIGINS` to its exact origin (for example, `http://localhost:3000` or `http://localhost:3100`). The API still rejects every other browser origin for writes. In the eventual single-origin deployment this setting is not needed.
+
 ## Local assistant contract
 
 `GET /api/assistant/status` is a public readiness check. Authenticated `POST /api/assistant/chat` sends the signed-in owner's tasks, user-managed context notes, and available seven-day Calendar context to one installed Ollama model. Chat history is limited to the latest eight entries, individual inputs and replies are bounded, and context sections have fixed size budgets. The data sections are explicitly marked as untrusted in the system prompt so instructions embedded in a task, note, or Calendar title are not treated as commands.

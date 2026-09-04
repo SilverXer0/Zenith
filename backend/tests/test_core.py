@@ -158,6 +158,15 @@ class CoreTests(unittest.TestCase):
         accepted = self.client.post("/api/tasks", json={"title": "Same origin"}, headers={"Origin": "http://testserver"})
         self.assertEqual(accepted.status_code, 201)
 
+    def test_configured_frontend_origin_can_write_through_a_proxy(self):
+        with patch.dict(os.environ, {"ZENITH_ALLOWED_ORIGINS": "http://localhost:3100"}):
+            app = create_app(self.directory / "proxy")
+            with TestClient(app) as client:
+                self.assertEqual(client.post("/api/auth/setup", json=CREDENTIALS,
+                                             headers={"Origin": "http://localhost:3100"}).status_code, 201)
+                self.assertEqual(client.post("/api/tasks", json={"title": "Proxy task"},
+                                             headers={"Origin": "http://localhost:3100"}).status_code, 201)
+
     def test_completion_history_atomicity_and_reopening(self):
         user = self.setup_account()
         task = self.client.post("/api/tasks", json={"title": "Finish me"}).json()["task"]

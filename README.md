@@ -4,6 +4,8 @@ Zenith is a local-first personal manager MVP: a responsive task list with a smal
 
 The working app below still uses Node and the current responsive UI. An isolated [Python/FastAPI development backend](backend/README.md) now starts the migration to the [planned architecture](docs/architecture-migration.md); it is not yet a replacement for the Windows service.
 
+The target frontend now lives in [`frontend/`](frontend/README.md). It is intentionally separate while the Python API and the existing Node service are being verified independently; do not run both services on the same port.
+
 ## Run it
 
 Requires Node.js 20 or newer and the `sqlite3` command-line runtime.

@@ -34,6 +34,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     voice = LocalVoice()
     planning = Planning(database, google_calendar)
     secure_cookie = os.environ.get("ZENITH_COOKIE_SECURE", "").lower() in ("1", "true")
+    configured_origins = {
+        origin.strip().rstrip("/")
+        for origin in os.environ.get("ZENITH_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    }
 
     @asynccontextmanager
     async def lifespan(app):
@@ -50,7 +55,9 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.middleware("http")
     async def boundaries(request: Request, call_next):
         origin = request.headers.get("origin")
-        if request.method not in ("GET", "HEAD", "OPTIONS") and origin and origin != str(request.base_url).rstrip("/"):
+        same_origin = origin and origin.rstrip("/") == str(request.base_url).rstrip("/")
+        trusted_origin = origin and origin.rstrip("/") in configured_origins
+        if request.method not in ("GET", "HEAD", "OPTIONS") and origin and not (same_origin or trusted_origin):
             return JSONResponse({"error": "Cross-origin writes are not allowed."}, status_code=403, headers={"Cache-Control": "no-store"})
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
