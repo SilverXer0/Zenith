@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expire
 function ready() { return databaseReady ||= initializeDatabase(); }
 
 function send(response, status, payload, headers = {}) {
-  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
+  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
   response.end(status === 204 ? "" : JSON.stringify(payload));
 }
 function sendAudio(response, audio) { response.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store", "Content-Length": audio.length }); response.end(audio); }

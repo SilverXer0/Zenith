@@ -16,6 +16,27 @@ Open http://localhost:3000. Tasks persist in `data/zenith.sqlite` (or `ZENITH_DA
 
 For the intended Windows home-server setup, install Tailscale on the Windows PC and each device that should access Zenith, then sign in to the same private tailnet. From PowerShell in the Zenith folder, run `scripts\start-zenith-tailscale.ps1`. The helper binds Zenith to the PC's Tailscale address and prints the private URL to open on your Mac or phone. This keeps Zenith off the public internet; do not port-forward port 3000. `ZENITH_HOST` can also be set manually when you need a different bind address.
 
+### Live task updates
+
+Open the same Windows-hosted Zenith URL and sign in to the same Zenith account on each device. Saved task changes appear immediately on the device making them; the authenticated event stream tells other open sessions to fetch the latest tasks. Create, edit, complete, reopen, delete, and confirmed assistant changes all use this path. Ollama is not required.
+
+Zenith catches up when the live stream reconnects, when the page becomes visible again, and when the browser comes back online. A 30-second check while the page is visible provides a fallback if live updates are interrupted or unsupported. The header shows the connection status. Task reads bypass browser caches, and late responses cannot overwrite a newer save. Failed saves keep the draft; a successful save followed by a failed refresh is not reported as an unsuccessful save.
+
+This updates the task list, counters, daily focus, and completion summary without reloading the page or clearing an unsaved capture draft. It is not offline editing or closed-app push: browsers may suspend background pages, and the Windows host must remain running and reachable. Calendar, memory, morning briefing, and weekly-plan panels still have their existing separate refresh behavior.
+
+After updating the Windows checkout, restart Zenith and reload each device once to load the new client code. Verify on the real devices:
+
+1. Open the same server URL on Windows and your Mac/phone; check for `Live sync connected`.
+2. Capture a task on one device. It should appear on both without toggling completed tasks or refreshing.
+3. Edit, complete, reopen, and delete it from the other device; check the first device each time.
+4. Disconnect the phone temporarily, add a task on Windows, then reconnect and return to Zenith. The phone should catch up automatically.
+
+### Verification
+
+`npm test` runs the API integration and dependency-free client regression tests using disposable data. They cover separate authenticated live streams, immediate rendering, failed saves/refreshes, out-of-order responses, reconnects, fallback refresh, and logout cleanup.
+
+For an optional real-browser check, run `node scripts/verify-task-sync.mjs` in a development environment with Playwright and Chrome installed. `ZENITH_PLAYWRIGHT_MODULE` can point to an existing Playwright module entry file; `ZENITH_BROWSER_CHANNEL` defaults to `chrome`. The check creates separate desktop and phone-sized sessions against a temporary SQLite database, tests bidirectional changes, interrupted connections and delayed/failed reads, and cleans up afterward. It keeps Ollama offline. Playwright is only a testing tool, not a Zenith runtime dependency. This check disables service workers for network fault injection and does not replace verification on actual devices over Tailscale.
+
 ### PWA installation
 
 Zenith includes a web-app manifest and service worker. The static app shell can be installed as a PWA when served from a secure context. `http://localhost:3000` is suitable for local browser testing; a raw `http://100.x.x.x:3000` Tailscale address is usable across devices but browsers generally require HTTPS for PWA installation. Tailscale HTTPS/Serve setup is the next networking step. The service worker never caches `/api/` responses or private task data.

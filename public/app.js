@@ -1,6 +1,9 @@
 const state = { tasks: [], showCompleted: false, user: null, assistantHistory: [] };
 let assistantModel = null;
 let liveEvents = null;
+let taskLoadVersion = 0;
+let taskRefreshTimer = null;
+let summaryLoadVersion = 0;
 const $ = (selector) => document.querySelector(selector);
 const api = async (path, options) => { const response = await fetch(path, options); if (!response.ok && response.status !== 204) throw new Error((await response.json()).error); return response.status === 204 ? null : response.json(); };
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -13,7 +16,15 @@ async function loadBriefing() { $("#briefingError").textContent = ""; try { cons
 function renderMorningBriefing(briefing) { $("#morningSummary").textContent = briefing.summary; const renderTaskList = (selector, tasks, emptyText) => { const list = $(selector); list.replaceChildren(); if (!tasks.length) { const empty = document.createElement("li"); empty.className = "morning-empty"; empty.textContent = emptyText; list.append(empty); return; } for (const task of tasks) { const item = document.createElement("li"); const title = document.createElement("strong"); title.textContent = task.title; const details = document.createElement("span"); details.textContent = `${task.project} · ${formatDue(task.dueDate)} · ${task.priority} priority`; item.append(title, details); list.append(item); } }; renderTaskList("#morningUrgent", [...briefing.overdue, ...briefing.dueToday], "Nothing urgent today."); renderTaskList("#morningUpcoming", briefing.upcoming, "No dated tasks in the next few days."); $("#morningCalendar").textContent = !briefing.calendar.connected ? "Google Calendar is not connected." : briefing.calendar.available ? `${briefing.calendar.events.length} calendar event${briefing.calendar.events.length === 1 ? "" : "s"} today.` : "Google Calendar is temporarily unavailable."; }
 async function loadMorningBriefing() { $("#morningError").textContent = ""; try { const briefing = await api(`/api/briefing/morning?date=${encodeURIComponent(localDateString())}`); renderMorningBriefing(briefing); } catch (error) { $("#morningError").textContent = error.message; } }
 function renderDailySummary(summary) { $("#summaryCounts").textContent = `${summary.counts.completed} completed · ${summary.counts.created} captured · ${summary.counts.open} still open`; const list = $("#summaryTasks"); list.replaceChildren(); if (!summary.completedTasks.length) { const empty = document.createElement("li"); empty.textContent = "Nothing completed today yet."; list.append(empty); return; } for (const task of summary.completedTasks) { const item = document.createElement("li"); const title = document.createElement("strong"); title.textContent = task.title; const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(task.completedAt)); item.append(title, ` · completed at ${time}`); list.append(item); } }
-async function loadDailySummary() { $("#summaryError").textContent = ""; try { const summary = await api(`/api/summaries/daily?date=${encodeURIComponent(localDateString())}&offset=${encodeURIComponent(new Date().getTimezoneOffset())}`); renderDailySummary(summary); } catch (error) { $("#summaryError").textContent = error.message; } }
+async function loadDailySummary() {
+  const user = state.user;
+  const version = ++summaryLoadVersion;
+  $("#summaryError").textContent = "";
+  try {
+    const summary = await api(`/api/summaries/daily?date=${encodeURIComponent(localDateString())}&offset=${encodeURIComponent(new Date().getTimezoneOffset())}`);
+    if (state.user === user && version === summaryLoadVersion) renderDailySummary(summary);
+  } catch (error) { if (state.user === user && version === summaryLoadVersion) $("#summaryError").textContent = error.message; }
+}
 function mondayDate(date = new Date()) { const monday = new Date(date); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7)); return localDateString(monday); }
 function renderWeeklyPlan(plan) { $("#weeklySummary").textContent = `${plan.counts.open} open · ${plan.counts.scheduled} scheduled this week · ${plan.counts.unscheduled} unscheduled${plan.counts.overdue ? ` · ${plan.counts.overdue} overdue` : ""}`; const days = $("#weeklyDays"); days.replaceChildren(); for (const day of plan.days) { const section = document.createElement("section"); section.className = "weekly-day"; const heading = document.createElement("h3"); heading.textContent = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric" }).format(new Date(`${day.date}T12:00:00`)); const list = document.createElement("ul"); if (!day.tasks.length) { const empty = document.createElement("li"); empty.className = "weekly-empty"; empty.textContent = "No tasks scheduled"; list.append(empty); } for (const task of day.tasks) { const item = document.createElement("li"); const title = document.createElement("strong"); title.textContent = task.title; item.append(title, ` · ${task.project} · ${task.priority}`); list.append(item); } section.append(heading, list); days.append(section); } const unscheduled = $("#weeklyUnscheduled"); unscheduled.replaceChildren(); if (!plan.unscheduled.length) { const empty = document.createElement("li"); empty.className = "weekly-empty"; empty.textContent = "Nothing waiting for a date."; unscheduled.append(empty); } for (const task of plan.unscheduled) { const item = document.createElement("li"); const title = document.createElement("strong"); title.textContent = task.title; item.append(title, ` · ${task.project} · ${task.priority}`); unscheduled.append(item); } $("#weeklyCalendar").textContent = !plan.calendar.connected ? "Google Calendar is not connected." : plan.calendar.available ? `${plan.calendar.events.length} calendar event${plan.calendar.events.length === 1 ? "" : "s"} this week.` : "Google Calendar is temporarily unavailable."; }
 async function loadWeeklyPlan() { $("#weeklyError").textContent = ""; try { const plan = await api(`/api/weekly-plan?start=${encodeURIComponent(mondayDate())}`); renderWeeklyPlan(plan); } catch (error) { $("#weeklyError").textContent = error.message; } }
@@ -41,20 +52,86 @@ function render() {
   $("#emptyState").hidden = visible.length > 0; const list = $("#taskList"); list.replaceChildren();
   for (const task of visible.sort((a, b) => Number(a.completed) - Number(b.completed) || (a.dueDate || "9999").localeCompare(b.dueDate || "9999"))) {
     const item = $("#taskTemplate").content.firstElementChild.cloneNode(true); item.classList.toggle("is-done", task.completed); item.querySelector("strong").textContent = task.title; item.querySelector("span").textContent = `${task.project} · ${formatDue(task.dueDate)} · ${task.priority}`; const toggle = item.querySelector(".toggle"); toggle.checked = task.completed;
-    toggle.addEventListener("change", () => update(task.id, { completed: toggle.checked })); item.querySelector(".edit").addEventListener("click", () => openEditor(task)); item.querySelector(".delete").addEventListener("click", () => remove(task.id)); list.append(item);
+    toggle.addEventListener("change", () => { toggle.disabled = true; taskAction(() => update(task.id, { completed: toggle.checked })); }); item.querySelector(".edit").addEventListener("click", () => openEditor(task)); item.querySelector(".delete").addEventListener("click", (event) => { event.currentTarget.disabled = true; taskAction(() => remove(task.id)); }); list.append(item);
   }
 }
-async function loadTasks() { const { tasks } = await api("/api/tasks"); state.tasks = tasks; render(); renderBriefing({ counts: { open: tasks.filter((task) => !task.completed).length, overdue: tasks.filter((task) => !task.completed && task.dueDate && task.dueDate < localDateString()).length, dueToday: tasks.filter((task) => !task.completed && isToday(task.dueDate)).length }, focusTasks: tasks.filter((task) => !task.completed).sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999") || ({ high: 0, medium: 1, low: 2 }[a.priority] - { high: 0, medium: 1, low: 2 }[b.priority])).slice(0, 5) }); loadDailySummary(); notifyDueTasks(tasks); $("#logout").hidden = false; $("#unloadModel").hidden = !assistantModel; }
-function closeLiveUpdates() { if (liveEvents) { liveEvents.close(); liveEvents = null; } }
+function setTasks(tasks) {
+  // A successful write must invalidate any older task reads still in flight.
+  taskLoadVersion += 1;
+  state.tasks = tasks;
+  render();
+  renderBriefing({ counts: { open: tasks.filter((task) => !task.completed).length, overdue: tasks.filter((task) => !task.completed && task.dueDate && task.dueDate < localDateString()).length, dueToday: tasks.filter((task) => !task.completed && isToday(task.dueDate)).length }, focusTasks: tasks.filter((task) => !task.completed).sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999") || ({ high: 0, medium: 1, low: 2 }[a.priority] - { high: 0, medium: 1, low: 2 }[b.priority])).slice(0, 5) });
+  loadDailySummary();
+  notifyDueTasks(tasks);
+  $("#logout").hidden = false;
+  $("#unloadModel").hidden = !assistantModel;
+}
+async function loadTasks() {
+  const user = state.user;
+  if (!user) return false;
+  const version = ++taskLoadVersion;
+  try {
+    const { tasks } = await api("/api/tasks", { cache: "no-store" });
+    if (version !== taskLoadVersion || state.user !== user) return false;
+    setTasks(tasks);
+    return true;
+  } catch (error) {
+    if (version === taskLoadVersion && state.user === user) throw error;
+    return false;
+  }
+}
+function refreshTasksSoon() {
+  if (!state.user) return;
+  clearTimeout(taskRefreshTimer);
+  // Coalesce a burst of change events, including our own write's broadcast.
+  taskRefreshTimer = setTimeout(async () => {
+    taskRefreshTimer = null;
+    try {
+      if (!await loadTasks()) return;
+      $("#syncStatus").textContent = liveEvents?.readyState === 1 ? "Live sync connected" : "Auto-refresh on · live sync reconnecting…";
+      if (!window.EventSource) $("#syncStatus").textContent = "Auto-refresh on (30s)";
+    } catch {
+      $("#syncStatus").textContent = "Updates paused · retrying automatically…";
+    }
+  }, 75);
+}
+function taskSaved(task) {
+  setTasks([...state.tasks.filter((existing) => existing.id !== task.id), task]);
+  refreshTasksSoon();
+}
+async function taskAction(action) {
+  $("#taskError").textContent = "";
+  try { await action(); }
+  catch (error) { render(); $("#taskError").textContent = error.message; }
+}
+function closeLiveUpdates() {
+  clearTimeout(taskRefreshTimer);
+  taskRefreshTimer = null;
+  if (liveEvents) { liveEvents.close(); liveEvents = null; }
+}
 function connectLiveUpdates() {
   closeLiveUpdates();
-  if (!state.user || !window.EventSource) { $("#syncStatus").textContent = window.EventSource ? "Live sync unavailable" : "Live sync not supported"; return; }
+  if (!state.user) return;
+  if (!window.EventSource) { $("#syncStatus").textContent = "Auto-refresh on (30s)"; return; }
   $("#syncStatus").textContent = "Live sync connecting…";
-  liveEvents = new EventSource("/api/events");
-  liveEvents.addEventListener("ready", () => { $("#syncStatus").textContent = "Live sync connected"; });
-  liveEvents.addEventListener("tasks_changed", () => { loadTasks().catch(() => { $("#syncStatus").textContent = "Live sync reconnecting…"; }); });
-  liveEvents.onerror = () => { $("#syncStatus").textContent = "Live sync reconnecting…"; };
+  const events = new EventSource("/api/events");
+  liveEvents = events;
+  const refresh = () => { if (liveEvents === events) refreshTasksSoon(); };
+  // Every connection (including a reconnect) fetches changes missed offline.
+  events.addEventListener("ready", refresh);
+  events.addEventListener("tasks_changed", refresh);
+  events.onerror = () => { if (liveEvents === events) $("#syncStatus").textContent = "Auto-refresh on · live sync reconnecting…"; };
 }
+function resumeTaskUpdates() {
+  if (!state.user || document.hidden) return;
+  if (window.EventSource && (!liveEvents || liveEvents.readyState === 2)) connectLiveUpdates();
+  refreshTasksSoon();
+}
+window.addEventListener("online", resumeTaskUpdates);
+window.addEventListener("pageshow", resumeTaskUpdates);
+document.addEventListener("visibilitychange", resumeTaskUpdates);
+// A safety net for suspended phones, interrupted streams, and older browsers.
+setInterval(resumeTaskUpdates, 30000);
 function formatCalendarStart(event) {
   if (!event.start) return "Time unavailable";
   const value = event.allDay ? new Date(`${event.start}T12:00:00`) : new Date(event.start);
@@ -125,11 +202,28 @@ async function speakAssistantReply(text, button) {
 }
 function addSpeechControl(chat, text) { if (!ttsReady) return; const button = document.createElement("button"); button.type = "button"; button.className = "text-button voice-replay"; button.textContent = "Speak reply"; button.addEventListener("click", () => speakAssistantReply(text, button)); chat.append(button); }
 function actionLabel(action) { if (action.type === "create_task") return `Create “${action.title}”`; if (action.type === "complete_task") return "Mark task complete"; if (action.type === "delete_task") return "Delete task"; return `Update “${action.title || "task"}”`; }
-function addActionProposal(actions) { if (!actions?.length) return; const chat = $("#assistantChat"); const proposal = document.createElement("div"); proposal.className = "assistant-proposal"; const title = document.createElement("strong"); title.textContent = "Suggested changes"; proposal.append(title); const list = document.createElement("ul"); for (const action of actions) { const item = document.createElement("li"); item.textContent = actionLabel(action); list.append(item); } proposal.append(list); const confirm = document.createElement("button"); confirm.type = "button"; confirm.textContent = "Confirm changes"; confirm.addEventListener("click", async () => { confirm.disabled = true; $("#assistantError").textContent = "Applying changes…"; try { const result = await api("/api/assistant/actions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actions }) }); state.tasks = result.tasks; render(); proposal.remove(); $("#assistantError").textContent = "Changes applied."; } catch (error) { confirm.disabled = false; $("#assistantError").textContent = error.message; } }); proposal.append(confirm); chat.append(proposal); chat.scrollTop = chat.scrollHeight; }
-async function update(id, patch) { const { task } = await api(`/api/tasks/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }); state.tasks = state.tasks.map((existing) => existing.id === id ? task : existing); render(); }
-async function remove(id) { await api(`/api/tasks/${id}`, { method: "DELETE" }); state.tasks = state.tasks.filter((task) => task.id !== id); render(); }
+function addActionProposal(actions) { if (!actions?.length) return; const chat = $("#assistantChat"); const proposal = document.createElement("div"); proposal.className = "assistant-proposal"; const title = document.createElement("strong"); title.textContent = "Suggested changes"; proposal.append(title); const list = document.createElement("ul"); for (const action of actions) { const item = document.createElement("li"); item.textContent = actionLabel(action); list.append(item); } proposal.append(list); const confirm = document.createElement("button"); confirm.type = "button"; confirm.textContent = "Confirm changes"; confirm.addEventListener("click", async () => { const user = state.user; confirm.disabled = true; $("#assistantError").textContent = "Applying changes…"; try { const result = await api("/api/assistant/actions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actions }) }); if (state.user !== user) return; setTasks(result.tasks); refreshTasksSoon(); proposal.remove(); $("#assistantError").textContent = "Changes applied."; } catch (error) { confirm.disabled = false; $("#assistantError").textContent = error.message; } }); proposal.append(confirm); chat.append(proposal); chat.scrollTop = chat.scrollHeight; }
+async function update(id, patch) { const user = state.user; const { task } = await api(`/api/tasks/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }); if (state.user === user) taskSaved(task); }
+async function remove(id) { const user = state.user; await api(`/api/tasks/${id}`, { method: "DELETE" }); if (state.user !== user) return; setTasks(state.tasks.filter((task) => task.id !== id)); refreshTasksSoon(); }
 function openEditor(task) { const form = $("#editForm"); form.dataset.taskId = task.id; $("#editTitle").value = task.title; $("#editProject").value = task.project; $("#editNotes").value = task.notes; $("#editPriority").value = task.priority; $("#editDueDate").value = task.dueDate || ""; $("#editError").textContent = ""; $("#editDialog").showModal(); }
-async function createTaskFromForm(event, defaults = {}) { event.preventDefault(); const formElement = event.currentTarget; const button = formElement.querySelector("button[type=submit]"); button.disabled = true; $("#taskError").textContent = ""; try { const form = new FormData(formElement); await api("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...defaults, ...Object.fromEntries(form) }) }); await loadTasks(); formElement.reset(); if (formElement.id === "taskForm") $("#priority").value = "medium"; $(formElement.querySelector("input")?.id === "captureTitle" ? "#captureTitle" : "#title").focus(); } catch (error) { $("#taskError").textContent = error.message; } finally { button.disabled = false; } }
+async function createTaskFromForm(event, defaults = {}) {
+  event.preventDefault();
+  const user = state.user;
+  const formElement = event.currentTarget;
+  const button = formElement.querySelector("button[type=submit]");
+  button.disabled = true;
+  $("#taskError").textContent = "";
+  try {
+    const form = new FormData(formElement);
+    const { task } = await api("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...defaults, ...Object.fromEntries(form) }) });
+    if (state.user !== user) return;
+    taskSaved(task);
+    formElement.reset();
+    if (formElement.id === "taskForm") $("#priority").value = "medium";
+    formElement.querySelector("input").focus();
+  } catch (error) { $("#taskError").textContent = error.message; }
+  finally { button.disabled = false; }
+}
 $("#captureForm").addEventListener("submit", (event) => createTaskFromForm(event, { project: "Inbox", priority: "medium" }));
 $("#taskForm").addEventListener("submit", (event) => createTaskFromForm(event));
 $("#cancelEdit").addEventListener("click", () => $("#editDialog").close());
@@ -151,7 +245,7 @@ api("/api/assistant/status").then(({ reachable, model }) => { $("#assistantStatu
 api("/api/assistant/status").then(({ model }) => { assistantModel = model; if (state.user && model) $("#unloadModel").hidden = false; });
 function showAuth(setupRequired) { $("#authPanel").hidden = false; $("#manager").hidden = true; $("#authEyebrow").textContent = setupRequired ? "WELCOME TO ZENITH" : "WELCOME BACK"; $("#authTitle").textContent = setupRequired ? "Set up your local account." : "Sign in to Zenith."; $("#authIntro").textContent = setupRequired ? "Choose a passphrase. It stays local and protects access to your tasks." : "Use your local account to continue."; $("#authSubmit").textContent = setupRequired ? "Create account" : "Sign in"; $("#authForm").dataset.mode = setupRequired ? "setup" : "login"; $("#password").autocomplete = setupRequired ? "new-password" : "current-password"; }
 $("#authForm").addEventListener("submit", async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const mode = event.currentTarget.dataset.mode; $("#authError").textContent = ""; try { const session = await api(mode === "setup" ? "/api/auth/setup" : "/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); state.user = session.user; $("#authPanel").hidden = true; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadMemory(); await loadBriefing(); await loadMorningBriefing(); await loadWeeklyPlan(); await loadVoiceStatus(); await loadNotificationStatus(); } catch (error) { $("#authError").textContent = error.message; } });
-$("#logout").addEventListener("click", async () => { closeLiveUpdates(); await api("/api/auth/session", { method: "DELETE" }); state.user = null; state.tasks = []; $("#logout").hidden = true; $("#unloadModel").hidden = true; showAuth(false); $("#password").value = ""; });
+$("#logout").addEventListener("click", async () => { await api("/api/auth/session", { method: "DELETE" }); closeLiveUpdates(); state.user = null; taskLoadVersion += 1; state.tasks = []; $("#logout").hidden = true; $("#unloadModel").hidden = true; showAuth(false); $("#password").value = ""; });
 $("#unloadModel").addEventListener("click", async () => { const button = $("#unloadModel"); button.disabled = true; try { const result = await api("/api/assistant/unload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }); $("#assistantStatus").textContent = result.unloaded ? "Local assistant released · VRAM available" : "Local assistant is not loaded"; } catch (error) { $("#assistantStatus").textContent = error.message; } finally { button.disabled = false; } });
 $("#assistantForm").addEventListener("submit", async (event) => { event.preventDefault(); const input = $("#assistantInput"); const message = input.value.trim(); if (!message) return; const chat = $("#assistantChat"); const userMessage = document.createElement("p"); userMessage.className = "assistant-message user-message"; userMessage.textContent = message; chat.append(userMessage); input.value = ""; $("#assistantError").textContent = "Thinking…"; try { const result = await api("/api/assistant/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history: state.assistantHistory }) }); const answer = document.createElement("p"); answer.className = "assistant-message"; answer.textContent = result.message; chat.append(answer); addSpeechControl(chat, result.message); addActionProposal(result.actions); state.assistantHistory.push({ role: "user", content: message }, { role: "assistant", content: result.message }); $("#assistantError").textContent = result.model ? `Using ${result.model}` : ""; chat.scrollTop = chat.scrollHeight; } catch (error) { $("#assistantError").textContent = error.message === "Local assistant is unavailable." ? "Ollama is offline. Your tasks are still available." : error.message; } });
 async function start() { const existing = await fetch("/api/auth/session"); if (existing.ok) { const session = await existing.json(); state.user = session.user; $("#manager").hidden = false; await loadTasks(); connectLiveUpdates(); await loadCalendar(); await loadMemory(); await loadBriefing(); await loadMorningBriefing(); await loadWeeklyPlan(); await loadVoiceStatus(); await loadNotificationStatus(); return; } const { setupRequired } = await api("/api/auth/status"); showAuth(setupRequired); }

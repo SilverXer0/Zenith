@@ -11,6 +11,8 @@ let dataDir;
 let localCookie;
 let migratedTask;
 let calendarMock;
+let ollamaMock;
+const eventRequests = new Set();
 
 const legacyTask = {
   id: "legacy-task",
@@ -34,6 +36,7 @@ async function request(path, options = {}) {
       response.on("end", () => resolve({ response: { status: response.statusCode, headers: response.headers }, body: options.raw ? raw : (raw ? JSON.parse(raw) : null) }));
     });
     request.on("error", reject);
+    request.setTimeout(10000, () => request.destroy(new Error(`Timed out: ${path}`)));
     if (options.body) request.write(options.body);
     request.end();
   });
@@ -53,24 +56,55 @@ async function openEventStream(cookie) {
     const streamRequest = httpRequest(url, { headers: { Accept: "text/event-stream", Cookie: cookie } }, (response) => {
       response.setEncoding("utf8");
       let buffer = "";
+      const messages = [];
       const waiters = [];
       response.on("data", (chunk) => {
         buffer += chunk;
+        let boundary;
+        while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+          const message = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          if (!message.startsWith(":")) messages.push(message);
+        }
         for (let index = waiters.length - 1; index >= 0; index -= 1) {
-          if (!buffer.includes(waiters[index].text)) continue;
+          const messageIndex = messages.findIndex((message) => message.includes(waiters[index].text));
+          if (messageIndex === -1) continue;
+          messages.splice(messageIndex, 1);
+          clearTimeout(waiters[index].timer);
           waiters[index].resolve();
           waiters.splice(index, 1);
         }
       });
+      response.on("close", () => {
+        for (const waiter of waiters.splice(0)) { clearTimeout(waiter.timer); waiter.reject(new Error("Event stream closed")); }
+      });
       response.on("error", reject);
-      resolve({ request: streamRequest, response, waitFor: (text) => new Promise((waitResolve) => { if (buffer.includes(text)) waitResolve(); else waiters.push({ text, resolve: waitResolve }); }) });
+      resolve({ request: streamRequest, response, waitFor: (text) => new Promise((waitResolve, waitReject) => {
+        const index = messages.findIndex((message) => message.includes(text));
+        if (index !== -1) { messages.splice(index, 1); waitResolve(); return; }
+        const waiter = { text, resolve: waitResolve, reject: waitReject };
+        waiter.timer = setTimeout(() => { waiters.splice(waiters.indexOf(waiter), 1); waitReject(new Error(`Missing live event: ${text}`)); }, 3000);
+        waiters.push(waiter);
+      }) });
     });
+    eventRequests.add(streamRequest);
+    streamRequest.on("close", () => eventRequests.delete(streamRequest));
+    streamRequest.setTimeout(10000, () => streamRequest.destroy(new Error("Event stream timed out")));
     streamRequest.on("error", reject);
     streamRequest.end();
   });
 }
 
-test("Zenith API integration", async () => {
+test("Zenith API integration", async (t) => {
+  t.after(async () => {
+    for (const request of eventRequests) request.destroy();
+    for (const server of [app, ollamaMock, calendarMock]) {
+      if (!server?.listening) continue;
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+    if (dataDir) await rm(dataDir, { recursive: true, force: true });
+  });
   dataDir = await mkdtemp(join(tmpdir(), "zenith-test-"));
   await writeFile(join(dataDir, "tasks.json"), JSON.stringify([legacyTask]));
   process.env.ZENITH_DATA_DIR = dataDir;
@@ -119,6 +153,7 @@ test("Zenith API integration", async () => {
 
   const first = await request("/api/tasks", { headers: { Cookie: localCookie } });
   assert.equal(first.response.status, 200);
+  assert.equal(first.response.headers["cache-control"], "no-store");
   assert.equal(first.body.tasks.length, 1);
   migratedTask = first.body.tasks[0];
   assert.equal(migratedTask.id, legacyTask.id);
@@ -247,20 +282,37 @@ test("Zenith API integration", async () => {
   const unauthenticatedEvents = await request("/api/events");
   assert.equal(unauthenticatedEvents.response.status, 401);
   const eventStream = await openEventStream(reLoginCookie);
+  const otherDeviceStream = await openEventStream(localCookie);
   assert.equal(eventStream.response.statusCode, 200);
-  await eventStream.waitFor("event: ready");
+  assert.equal(otherDeviceStream.response.statusCode, 200);
+  await Promise.all([eventStream.waitFor("event: ready"), otherDeviceStream.waitFor("event: ready")]);
+  const expectChangeOnBothDevices = () => Promise.all([eventStream.waitFor("event: tasks_changed"), otherDeviceStream.waitFor("event: tasks_changed")]);
   const liveCreated = await request("/api/tasks", jsonOptions("POST", { title: "Live sync task" }, reLoginCookie));
   assert.equal(liveCreated.response.status, 201);
-  await eventStream.waitFor("event: tasks_changed");
+  await expectChangeOnBothDevices();
+  const liveEdited = await request(`/api/tasks/${liveCreated.body.task.id}`, jsonOptions("PATCH", { title: "Live edited task" }, localCookie));
+  assert.equal(liveEdited.response.status, 200);
+  await expectChangeOnBothDevices();
+  const liveCompleted = await request(`/api/tasks/${liveCreated.body.task.id}`, jsonOptions("PATCH", { completed: true }, reLoginCookie));
+  assert.equal(liveCompleted.response.status, 200);
+  await expectChangeOnBothDevices();
   const liveRemoved = await request(`/api/tasks/${liveCreated.body.task.id}`, { method: "DELETE", headers: { Cookie: reLoginCookie } });
   assert.equal(liveRemoved.response.status, 204);
-  await eventStream.waitFor("event: tasks_changed");
+  await expectChangeOnBothDevices();
+  const liveAssistant = await request("/api/assistant/actions", jsonOptions("POST", { actions: [{ type: "create_task", title: "Confirmed live task" }] }, reLoginCookie));
+  assert.equal(liveAssistant.response.status, 200);
+  await expectChangeOnBothDevices();
+  const liveAssistantTask = liveAssistant.body.tasks.find((task) => task.title === "Confirmed live task");
+  assert.ok(liveAssistantTask);
+  await request(`/api/tasks/${liveAssistantTask.id}`, { method: "DELETE", headers: { Cookie: reLoginCookie } });
+  await expectChangeOnBothDevices();
   eventStream.request.destroy();
+  otherDeviceStream.request.destroy();
 
   let receivedChat;
   let assistantActionsResponse = [{ type: "create_task", title: "Assistant-created task", project: "Inbox", priority: "low" }];
   let unloadRequest;
-  const ollamaMock = createServer(async (ollamaRequest, ollamaResponse) => {
+  ollamaMock = createServer(async (ollamaRequest, ollamaResponse) => {
     let raw = "";
     for await (const chunk of ollamaRequest) raw += chunk;
     if (ollamaRequest.url === "/api/tags") { ollamaResponse.setHeader("Content-Type", "application/json"); ollamaResponse.end(JSON.stringify({ models: [{ name: "mock-model" }] })); return; }
