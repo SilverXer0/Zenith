@@ -86,6 +86,9 @@ test("Zenith API integration", async () => {
   assert.equal(manifest.response.status, 200);
   assert.equal(manifest.body.display, "standalone");
   assert.equal(manifest.body.start_url, "/");
+  const page = await request("/", { raw: true });
+  assert.match(page.body, /Capture to Inbox/);
+  assert.match(page.body, /Add project, priority, date, or notes/);
   const serviceWorker = await request("/sw.js", { raw: true });
   assert.equal(serviceWorker.response.status, 200);
   assert.match(serviceWorker.body, /api/);
