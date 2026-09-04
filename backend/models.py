@@ -96,3 +96,17 @@ class AssistantUnloadInput(BaseModel):
         if value is None:
             return None
         return value.strip() or None
+
+
+class VoiceSpeakInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    text: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def trim_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            if "\0" in value:
+                raise ValueError("Text contains an invalid character.")
+        return value

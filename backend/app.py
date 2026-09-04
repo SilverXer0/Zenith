@@ -18,8 +18,9 @@ from .database import Database
 from .errors import ApiError
 from .events import TaskEvents, TaskEventResponse
 from .models import (AssistantActionsInput, AssistantChatInput, AssistantUnloadInput,
-                     Credentials, MemoryPatch, TaskPatch)
+                     Credentials, MemoryPatch, TaskPatch, VoiceSpeakInput)
 from .planning import Planning, planning_date, weekly_start
+from .voice import LocalVoice, RECORDING_OPENAPI, WavResponse
 
 
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
@@ -30,6 +31,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     events = TaskEvents()
     google_calendar = GoogleCalendar(database)
     assistant = LocalAssistant(database, google_calendar)
+    voice = LocalVoice()
     planning = Planning(database, google_calendar)
     secure_cookie = os.environ.get("ZENITH_COOKIE_SECURE", "").lower() in ("1", "true")
 
@@ -165,6 +167,21 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def disconnect_calendar(current_user: dict = Depends(user)):
         google_calendar.disconnect(current_user["id"])
         return Response(status_code=204)
+
+    @app.get("/api/voice/status")
+    def voice_status(current_user: dict = Depends(user)):
+        return voice.status()
+
+    @app.post("/api/voice/transcribe", openapi_extra=RECORDING_OPENAPI)
+    async def voice_transcribe(request: Request, current_user: dict = Depends(user)):
+        recording, suffix = await voice.read_recording(request)
+        text = await run_in_threadpool(voice.transcribe, recording, suffix)
+        return {"text": text}
+
+    @app.post("/api/voice/speak", response_class=WavResponse)
+    async def voice_speak(body: VoiceSpeakInput, current_user: dict = Depends(user)):
+        audio = await run_in_threadpool(voice.synthesize, body.text)
+        return WavResponse(audio)
 
     @app.post("/api/assistant/chat")
     def assistant_chat(body: AssistantChatInput, current_user: dict = Depends(user)):
