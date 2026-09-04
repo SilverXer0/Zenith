@@ -9,7 +9,9 @@ const address = await new Promise((resolve, reject) => {
   app.once("error", reject);
   app.listen(0, "127.0.0.1", () => resolve(app.address()));
 });
-const credentials = { displayName: "Migration user", password: "Migration passphrase 2026!" };
+const credentials = process.env.ZENITH_TEST_CREDENTIALS
+  ? JSON.parse(process.env.ZENITH_TEST_CREDENTIALS)
+  : { displayName: "Migration user", password: "Migration passphrase 2026!" };
 function api(path, { method = "GET", payload, cookie } = {}) {
   return new Promise((resolve, reject) => {
     const req = request({ hostname: "127.0.0.1", port: address.port, path, method,
@@ -50,14 +52,16 @@ try {
     const briefing = await api(`/api/briefing?date=${encodeURIComponent(date)}`, { cookie });
     const morning = await api(`/api/briefing/morning?date=${encodeURIComponent(date)}`, { cookie });
     const weekly = await api(`/api/weekly-plan?start=${encodeURIComponent(date)}`, { cookie });
+    const calendarStatus = await api("/api/calendar/status", { cookie });
     assert.equal(tasks.status, 200);
     assert.equal(memory.status, 200);
     assert.equal(summary.status, 200);
     assert.equal(briefing.status, 200);
     assert.equal(morning.status, 200);
     assert.equal(weekly.status, 200);
+    assert.equal(calendarStatus.status, 200);
     console.log(JSON.stringify({ tasks: tasks.body.tasks, memories: memory.body.memories, summary: summary.body,
-      briefing: briefing.body, morning: morning.body, weekly: weekly.body }));
+      briefing: briefing.body, morning: morning.body, weekly: weekly.body, calendarStatus: calendarStatus.body }));
   } else {
     throw new Error("Expected seed or read mode");
   }

@@ -32,10 +32,18 @@ SCHEMA = (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS calendar_accounts (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        access_token TEXT, refresh_token TEXT NOT NULL, token_expires_at TEXT,
+        calendar_name TEXT, connected_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS calendar_oauth_states (
+        state TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL)""",
     "CREATE INDEX IF NOT EXISTS tasks_user_updated ON tasks(user_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at)",
     "CREATE INDEX IF NOT EXISTS task_completion_user_time ON task_completion_events(user_id, completed_at)",
     "CREATE INDEX IF NOT EXISTS memory_user_updated ON memory_items(user_id, updated_at)",
+    "CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expires_at)",
 )
 
 
@@ -86,6 +94,11 @@ class Database:
             task_columns = {row["name"] for row in connection.execute("PRAGMA table_info(tasks)")}
             if "completed_at" not in task_columns:
                 connection.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
+            calendar_columns = {row["name"] for row in connection.execute("PRAGMA table_info(calendar_accounts)")}
+            for name in ("access_token", "token_expires_at", "calendar_name", "connected_at"):
+                if name not in calendar_columns:
+                    connection.execute(f"ALTER TABLE calendar_accounts ADD COLUMN {name} TEXT")
+            connection.execute("UPDATE calendar_accounts SET connected_at=? WHERE connected_at IS NULL", (timestamp(),))
             user = connection.execute("SELECT id FROM users ORDER BY created_at LIMIT 1").fetchone()
             user_id = user["id"] if user else str(uuid4())
             if not user:
@@ -214,8 +227,51 @@ class Database:
                 raise ApiError(404, "Context note not found.")
 
     def calendar_connected(self, user_id: str) -> bool:
+        return self.calendar_account(user_id) is not None
+
+    def calendar_account(self, user_id: str) -> dict | None:
         with self.connection() as connection:
-            exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar_accounts'").fetchone()
-            if not exists:
-                return False
-            return connection.execute("SELECT 1 FROM calendar_accounts WHERE user_id=?", (user_id,)).fetchone() is not None
+            row = connection.execute("""SELECT user_id AS userId, access_token AS accessToken,
+                refresh_token AS refreshToken, token_expires_at AS tokenExpiresAt,
+                calendar_name AS calendarName, connected_at AS connectedAt
+                FROM calendar_accounts WHERE user_id=?""", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def save_calendar_state(self, user_id: str, state: str, expires_at: str):
+        with self.connection(write=True) as connection:
+            connection.execute("DELETE FROM calendar_oauth_states WHERE expires_at<=?", (timestamp(),))
+            connection.execute("INSERT INTO calendar_oauth_states (state,user_id,expires_at) VALUES (?,?,?)",
+                               (state, user_id, expires_at))
+
+    def consume_calendar_state(self, state: str) -> str | None:
+        with self.connection(write=True) as connection:
+            now = timestamp()
+            connection.execute("DELETE FROM calendar_oauth_states WHERE expires_at<=?", (now,))
+            row = connection.execute("SELECT user_id FROM calendar_oauth_states WHERE state=?", (state,)).fetchone()
+            if not row:
+                return None
+            connection.execute("DELETE FROM calendar_oauth_states WHERE state=?", (state,))
+            return row["user_id"]
+
+    def save_calendar_account(self, user_id: str, access_token: str, refresh_token: str,
+                              expires_at: str, calendar_name: str, connected_at: str):
+        with self.connection(write=True) as connection:
+            connection.execute("""INSERT INTO calendar_accounts
+                (user_id,access_token,refresh_token,token_expires_at,calendar_name,connected_at)
+                VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+                access_token=excluded.access_token, refresh_token=excluded.refresh_token,
+                token_expires_at=excluded.token_expires_at, calendar_name=excluded.calendar_name,
+                connected_at=excluded.connected_at""",
+                (user_id, access_token, refresh_token, expires_at, calendar_name, connected_at))
+
+    def update_calendar_tokens(self, user_id: str, access_token: str, refresh_token: str, expires_at: str):
+        with self.connection(write=True) as connection:
+            result = connection.execute("""UPDATE calendar_accounts SET access_token=?, refresh_token=?,
+                token_expires_at=? WHERE user_id=?""", (access_token, refresh_token, expires_at, user_id))
+            if not result.rowcount:
+                raise ApiError(409, "Google Calendar is not connected.")
+
+    def delete_calendar_connection(self, user_id: str):
+        with self.connection(write=True) as connection:
+            connection.execute("DELETE FROM calendar_accounts WHERE user_id=?", (user_id,))
+            connection.execute("DELETE FROM calendar_oauth_states WHERE user_id=?", (user_id,))

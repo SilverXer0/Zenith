@@ -7,11 +7,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
 from .auth import Auth, COOKIE_NAME, SESSION_SECONDS, token_hash
+from .calendar import GoogleCalendar
 from .database import Database
 from .errors import ApiError
 from .events import TaskEvents, TaskEventResponse
@@ -25,7 +26,8 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     database = Database(directory)
     auth = Auth(database)
     events = TaskEvents()
-    planning = Planning(database)
+    google_calendar = GoogleCalendar(database)
+    planning = Planning(database, google_calendar)
     secure_cookie = os.environ.get("ZENITH_COOKIE_SECURE", "").lower() in ("1", "true")
 
     @asynccontextmanager
@@ -85,6 +87,12 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def auth_status():
         return {"setupRequired": auth.setup_required()}
 
+    @app.get("/api/calendar/oauth/callback")
+    def calendar_callback(state: str | None = None, code: str | None = None,
+                          error: str | None = None):
+        google_calendar.complete_callback(state, code, error)
+        return RedirectResponse("/?calendar=connected", status_code=302)
+
     @app.post("/api/auth/setup")
     def setup(credentials: Credentials):
         return session_response(auth.setup(credentials.displayName, credentials.password))
@@ -131,6 +139,24 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def delete_task(task_id: str, current_user: dict = Depends(user)):
         database.delete_task(current_user["id"], task_id)
         events.publish(current_user["id"])
+        return Response(status_code=204)
+
+    @app.get("/api/calendar/status")
+    def calendar_status(current_user: dict = Depends(user)):
+        return google_calendar.status(current_user["id"])
+
+    @app.get("/api/calendar/connect")
+    def calendar_connect(current_user: dict = Depends(user)):
+        return RedirectResponse(google_calendar.connect_url(current_user["id"]), status_code=302)
+
+    @app.get("/api/calendar/events")
+    def calendar_events(start: str | None = None, end: str | None = None,
+                        current_user: dict = Depends(user)):
+        return {"events": google_calendar.events(current_user["id"], start, end)}
+
+    @app.delete("/api/calendar/connection", status_code=204)
+    def disconnect_calendar(current_user: dict = Depends(user)):
+        google_calendar.disconnect(current_user["id"])
         return Response(status_code=204)
 
     @app.get("/api/memory")

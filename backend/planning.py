@@ -3,6 +3,7 @@
 import re
 from datetime import date, datetime, time, timedelta, timezone
 
+from .calendar import GoogleCalendar
 from .database import Database
 from .errors import ApiError
 
@@ -45,8 +46,9 @@ def summary_window(day: str, offset: int) -> tuple[str, str]:
 
 
 class Planning:
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, google_calendar: GoogleCalendar | None = None):
         self.database = database
+        self.google_calendar = google_calendar
 
     def briefing(self, user_id: str, day: str) -> dict:
         tasks = self.database.list_tasks(user_id)
@@ -66,9 +68,10 @@ class Planning:
             "dueToday": sum(task["dueDate"] == day for task in opened),
         }, "focusTasks": focus}
 
-    def unavailable_calendar(self, user_id: str) -> dict:
-        # The account survives migration, but event reads belong to the Calendar port.
-        return {"connected": self.database.calendar_connected(user_id), "available": False, "events": []}
+    def calendar(self, user_id: str, start: str, end: str) -> dict:
+        if not self.google_calendar:
+            return {"connected": self.database.calendar_connected(user_id), "available": False, "events": []}
+        return self.google_calendar.projection(user_id, start, end)
 
     def morning(self, user_id: str, day: str) -> dict:
         opened = [task for task in self.database.list_tasks(user_id) if not task["completed"]]
@@ -77,12 +80,15 @@ class Planning:
         horizon = add_days(day, 4)
         upcoming = sorted((task for task in opened if task["dueDate"] and day < task["dueDate"] < horizon),
                           key=lambda task: task["dueDate"])[:5]
-        calendar = self.unavailable_calendar(user_id)
+        calendar = self.calendar(user_id, f"{day}T00:00:00Z", f"{add_days(day, 1)}T00:00:00Z")
         parts = []
         if overdue:
             parts.append(f"{len(overdue)} overdue")
         if due_today:
             parts.append(f"{len(due_today)} due today")
+        if calendar["events"]:
+            count = len(calendar["events"])
+            parts.append(f"{count} calendar event{'s' if count != 1 else ''}")
         return {"date": day, "summary": " · ".join(parts) if parts else "No urgent items this morning.",
                 "overdue": overdue, "dueToday": due_today, "upcoming": upcoming, "calendar": calendar}
 
@@ -96,7 +102,8 @@ class Planning:
                 for day in (add_days(start, index) for index in range(7))]
         return {"start": start, "end": end,
                 "counts": {"open": len(opened), "overdue": len(overdue), "scheduled": len(scheduled), "unscheduled": len(unscheduled)},
-                "days": days, "unscheduled": unscheduled, "calendar": self.unavailable_calendar(user_id)}
+                "days": days, "unscheduled": unscheduled,
+                "calendar": self.calendar(user_id, f"{start}T00:00:00Z", f"{end}T00:00:00Z")}
 
     def daily_summary(self, user_id: str, day: str, offset: int) -> dict:
         start, end = summary_window(day, offset)

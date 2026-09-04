@@ -9,13 +9,24 @@ This is the first executable step toward Zenith's planned **Python/FastAPI backe
 - Authenticated live task events, with per-user isolation and session-aware stream cleanup.
 - User-managed persistent context CRUD, stored per account.
 - Read-only daily focus, morning task view, seven-day plan, and completion-summary APIs.
+- Optional read-only Google Calendar OAuth, event reads, refreshable sessions, and planning context.
 - SQLite through Python's standard library, without the external SQLite CLI.
 - Compatibility with the existing SQLite file, Node scrypt passphrases and hashed session tokens.
 - One-time legacy `tasks.json` import and upgrades of older user/task tables.
 - Atomic task writes and completion-event recording; concurrent completions record one transition.
 - Same-origin write checks, HttpOnly/SameSite cookies, optional Secure cookies, and uncached API responses.
 
-Core startup, context and planning operations neither connect to nor load Ollama. This development backend does **not** yet implement assistant, Google Calendar event access/OAuth, or voice endpoints. It does not serve the current UI. These are missing capabilities, not disabled implementations or feature parity.
+Core startup, tasks and context neither connect to nor load Ollama. This development backend does **not** yet implement assistant or voice endpoints. It does not serve the current UI. These are missing capabilities, not disabled implementations or feature parity.
+
+## Optional Google Calendar contract
+
+The Python API now matches the existing read-only Calendar surface: authenticated status, connect, upcoming-event and disconnect routes, plus the public OAuth callback protected by a random, one-time state that expires after ten minutes. Authorization requests offline access and only `https://www.googleapis.com/auth/calendar.readonly`. Access tokens are refreshed when close to expiry and once after a Calendar 401 response. A failed or malformed remote response produces a generic local error and never exposes Google response bodies or credentials.
+
+Primary-calendar event reads expand recurring instances, order by start time, normalize the requested range to UTC and follow pagination while returning at most 100 events. The default range is the current UTC day through seven days later. Explicit `start` and `end` values must be `YYYY-MM-DD` dates or timezone-aware timestamps, and the end must be later than the start. Morning and weekly planning include Calendar events when they are available; a Calendar outage does not prevent task planning.
+
+Calendar remains optional. If client settings are absent, Core starts normally, status reports `configured: false`, no Google request is attempted, and explicit connect/event requests return 409. A retained account can still report `connected: true` while `available` is false in planning. OAuth states, access tokens and refresh tokens are account-scoped in the local SQLite database and remain compatible with the Node schema. The database is local but is not encrypted by the Zenith passphrase, so protect the Windows account and database backup like other private files.
+
+For development, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. The callback defaults to `http://127.0.0.1:8000/api/calendar/oauth/callback`; set `GOOGLE_REDIRECT_URI` to the exact authorized HTTPS callback for Tailscale or a frontend proxy. `GOOGLE_TOKEN_URL` and `GOOGLE_CALENDAR_URL` exist only for isolated compatibility tests and should retain their defaults in normal use. The working Node deployment and its current port-3000 callback are unchanged by this migration slice.
 
 ## Context and task planning contract
 
@@ -26,8 +37,6 @@ The read-only planning routes are `GET /api/briefing`, `GET /api/briefing/mornin
 Daily summaries use recorded completion events, so reopening, renaming or deleting the current task cannot rewrite what was completed. Start boundaries are inclusive and end boundaries exclusive. Current open/created counts are a current task snapshot; they are not a reconstructed historical end-of-day state. The history and task snapshot are read in one SQLite transaction.
 
 Clients should pass a real `YYYY-MM-DD` date. If omitted, UTC today is used for compatibility; the current browser supplies its local date. Daily summary's `offset` is a whole number from -840 to 840 and follows `Date.getTimezoneOffset()` (positive west of UTC). This fixed 24-hour compatibility window is not a complete timezone/DST model. IANA-timezone and calendar-aware scheduling remain later planning gates.
-
-Until the Calendar port lands, morning/weekly responses report preserved account state honestly: `connected` reflects a retained account row, while `available` is false and `events` is empty. No Google request is attempted. That is a deliberate migration boundary, not successful Calendar integration.
 
 ## Live task event contract
 
@@ -81,8 +90,8 @@ Task input is intentionally stricter than the prototype: dates must be real `YYY
 
 ## Verification and remaining gates
 
-The Python suite covers actual FastAPI requests, server startup, independent sessions, expiry, user isolation, validation, transactions, concurrency, restart persistence, legacy JSON, old SQLite schemas, and real Node → Python → Node compatibility. The live-event tests use real HTTP streams against temporary Uvicorn servers, verifying task changes across two sessions, user isolation, failed-write silence, reconnect snapshots, and logout/expiry/revocation. Separate broker/ASGI tests cover 10,000-change bursts, heartbeat checks, blocked sends, cancellation and cleanup. Context/planning tests cover CRUD, account isolation, restart persistence, ordering, failed-write rollback, date/offset boundaries, completion-history retention, calendar-unavailable state, read-only operation without Ollama, and exact Node API comparisons. All fixtures use disposable directories; real task data is not part of the tests. It also checks that pre-existing context and calendar-table data are not removed by migration. The Node suite remains `npm test`.
+The Python suite covers actual FastAPI requests, server startup, independent sessions, expiry, user isolation, validation, transactions, concurrency, restart persistence, legacy JSON, old SQLite schemas, and real Node → Python → Node compatibility. The live-event tests use real HTTP streams against temporary Uvicorn servers, verifying task changes across two sessions, user isolation, failed-write silence, reconnect snapshots, and logout/expiry/revocation. Separate broker/ASGI tests cover 10,000-change bursts, heartbeat checks, blocked sends, cancellation and cleanup. Context/planning tests cover CRUD, account isolation, restart persistence, ordering, failed-write rollback, date/offset boundaries, completion-history retention, calendar-unavailable state, read-only operation without Ollama, and exact Node API comparisons. Calendar tests use a disposable local service to verify OAuth state ownership/expiry/replay protection, code exchange, token refresh and retry, pagination, event projection, remote failures, schema upgrades, disconnect, planning context, and Python → Node compatibility. All fixtures use disposable directories; real task data and credentials are not part of the tests. The Node suite remains `npm test`.
 
-These checks do not prove a complete browser UI against Python, Windows packaging, real Tailscale access, actual Google OAuth/Calendar reads, real Qwen inference, microphone/speaker operation, timezone-aware schedule planning, or full API parity. The next migration gates are optional-service API parity and then the responsive Next.js/TypeScript/Tailwind frontend. See [the migration plan](../docs/architecture-migration.md) for the full scope.
+These checks do not prove a complete browser UI against Python, Windows packaging, real Tailscale access, actual Google OAuth/Calendar reads, real Qwen inference, microphone/speaker operation, timezone-aware schedule planning, or full API parity. The next migration gates are the local assistant and voice APIs, then the responsive Next.js/TypeScript/Tailwind frontend. See [the migration plan](../docs/architecture-migration.md) for the full scope.
 
-Implementation references: [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/), [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/), [SSE and the browser event contract](https://fastapi.tiangolo.com/tutorial/server-sent-events/), and [Python SQLite transactions](https://docs.python.org/3/library/sqlite3.html).
+Implementation references: [Google web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server), [Google Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [Google event listing](https://developers.google.com/workspace/calendar/api/v3/reference/events/list), [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/), [SSE and the browser event contract](https://fastapi.tiangolo.com/tutorial/server-sent-events/), and [Python SQLite transactions](https://docs.python.org/3/library/sqlite3.html).

@@ -21,6 +21,12 @@ CREDENTIALS = {"displayName": "Migration user", "password": "Migration passphras
 
 class PlanningMemoryTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ, {})
+        environment.start()
+        self.addCleanup(environment.stop)
+        for key in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI",
+                    "GOOGLE_TOKEN_URL", "GOOGLE_CALENDAR_URL"):
+            os.environ.pop(key, None)
         temporary = tempfile.TemporaryDirectory(prefix="zenith-planning-test-")
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
@@ -198,10 +204,8 @@ class PlanningMemoryTests(unittest.TestCase):
         self.assertEqual(node["morning"], morning)
         self.assertEqual(node["weekly"], weekly)
 
-    def test_connected_calendar_is_explicitly_unavailable_until_calendar_port(self):
+    def test_connected_calendar_is_unavailable_when_server_is_unconfigured(self):
         with self.database.connection(write=True) as connection:
-            connection.execute("""CREATE TABLE calendar_accounts (user_id TEXT PRIMARY KEY, access_token TEXT,
-                refresh_token TEXT NOT NULL, token_expires_at TEXT, calendar_name TEXT, connected_at TEXT NOT NULL)""")
             connection.execute("INSERT INTO calendar_accounts VALUES (?,NULL,?,?,?,?)",
                                (self.user_id, "preserved-refresh-token", "2099-01-01T00:00:00.000Z", "Personal", timestamp()))
         for path in ("/api/briefing/morning?date=2026-09-04", "/api/weekly-plan?start=2026-09-04"):
