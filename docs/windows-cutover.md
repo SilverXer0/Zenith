@@ -22,6 +22,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-zenith-python.ps1
 
 This creates backend\.venv, installs the pinned Python runtime packages, installs the Next packages, and creates a production frontend build. It does not install or download Ollama, Qwen, Whisper, or TTS.
 
+After setup, run the read-only preflight:
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check-zenith-windows.ps1 -TailscaleHttps
+~~~
+
+It checks the required versions, backend environment, Next build, data directory, free ports, and Tailscale identity without starting or modifying Zenith. Omit the TailscaleHttps switch when verifying local-only startup.
+
 Before the first Python launch, stop the Node server and make a backup of the current data. The Python API is schema-compatible with the Node database, but the two servers must never write to it simultaneously. A simple stopped-server backup is:
 
 ~~~powershell
