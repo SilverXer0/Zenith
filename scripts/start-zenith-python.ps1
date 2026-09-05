@@ -45,7 +45,9 @@ if ($TailscaleHttps) {
   $allowedOrigins = @($publicUrl) + $allowedOrigins
 
   Write-Host "Configuring private Tailscale HTTPS access..."
-  & $tailscalePath serve --https=443 http://127.0.0.1:3000 --bg
+  # Current Tailscale Serve syntax uses the local port as the target and
+  # places --bg before it. HTTPS on port 443 is the default.
+  & $tailscalePath serve --bg 3000
   if ($LASTEXITCODE -ne 0) { throw "Tailscale Serve could not be configured. Enable HTTPS for this tailnet." }
   Write-Host "Zenith will be available privately at $publicUrl"
   if (-not $env:GOOGLE_REDIRECT_URI) {
