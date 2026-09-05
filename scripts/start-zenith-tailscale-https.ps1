@@ -20,7 +20,7 @@ $dnsName = $dnsName.TrimEnd('.')
 $publicUrl = "https://$dnsName"
 
 Write-Host "Configuring private Tailscale HTTPS access..."
-& $tailscalePath serve --bg 3000
+& $tailscalePath serve --bg --https=443 http://127.0.0.1:3000
 if ($LASTEXITCODE -ne 0) {
   throw "Tailscale Serve could not be configured. It may need HTTPS enabled in the Tailscale admin console."
 }
