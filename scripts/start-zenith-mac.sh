@@ -29,6 +29,10 @@ if [[ "${1:-}" == "--local-only" ]]; then
   local_only=true
 fi
 
+# The Mac host uses a small local Qwen model by default. Keep an explicit
+# environment override available for testing another installed model.
+export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"
+
 allowed_origins=("http://localhost:3000" "http://127.0.0.1:3000")
 tailscale_path=""
 public_url=""

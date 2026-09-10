@@ -53,11 +53,11 @@ Then open http://localhost:3000.
 
 ## Optional services
 
-Start Ollama separately when testing the assistant. If more than one model is installed, set the exact model tag before launching Zenith:
+Start Ollama separately when testing the assistant. The Mac launcher defaults to `qwen3:4b`. If more than one model is installed, set the exact model tag before launching Zenith:
 
 ~~~zsh
 export OLLAMA_URL="http://127.0.0.1:11434"
-export OLLAMA_MODEL="your-installed-qwen-model"
+export OLLAMA_MODEL="another-installed-model"
 zsh ./scripts/start-zenith-mac.sh
 ~~~
 
