@@ -2,13 +2,13 @@
 
 Zenith is a local-first personal manager MVP: a responsive task list with a small HTTP API and an optional local Ollama boundary.
 
-The working app below still uses Node and the current responsive UI. An isolated [Python/FastAPI development backend](backend/README.md) now starts the migration to the [planned architecture](docs/architecture-migration.md); it is not yet a replacement for the Windows service.
+The working app below still uses Node and the current responsive UI. An isolated [Python/FastAPI development backend](backend/README.md) now starts the migration to the [planned architecture](docs/architecture-migration.md). Mac is the active host for feature work and phone verification; Windows deployment is intentionally last.
 
 The target frontend now lives in [`frontend/`](frontend/README.md). It is intentionally separate while the Python API and the existing Node service are being verified independently; do not run both services on the same port.
 
 ## Run it
 
-For the controlled Python/Next migration and Windows home-server launch, follow [the Windows cutover guide](docs/windows-cutover.md). The Node command below remains the working prototype and rollback path until real-device verification is complete.
+For the active Python/Next migration and Mac/phone launch, follow [the Mac and phone runbook](docs/mac-phone-runbook.md). The [Windows cutover guide](docs/windows-cutover.md) is reserved for the final deployment step. The Node command below remains the working prototype and rollback path until real-device verification is complete.
 
 Requires Node.js 20 or newer and the `sqlite3` command-line runtime.
 
@@ -20,22 +20,22 @@ Open http://localhost:3000. Tasks persist in `data/zenith.sqlite` (or `ZENITH_DA
 
 ### Private cross-device access
 
-For the intended Windows home-server setup, install Tailscale on the Windows PC and each device that should access Zenith, then sign in to the same private tailnet. From PowerShell in the Zenith folder, run `scripts\start-zenith-tailscale.ps1`. The helper binds Zenith to the PC's Tailscale address and prints the private URL to open on your Mac or phone. This keeps Zenith off the public internet; do not port-forward port 3000. `ZENITH_HOST` can also be set manually when you need a different bind address.
+For the active Mac-hosted setup, install Tailscale on the Mac and each device that should access Zenith, then sign in to the same private tailnet. From the Zenith folder, run `zsh ./scripts/start-zenith-mac.sh`. The helper binds Zenith's local services behind a private HTTPS Tailscale address and prints the URL to open on your phone. This keeps Zenith off the public internet; do not port-forward port 3000.
 
 ### Live task updates
 
-Open the same Windows-hosted Zenith URL and sign in to the same Zenith account on each device. Saved task changes appear immediately on the device making them; the authenticated event stream tells other open sessions to fetch the latest tasks. Create, edit, complete, reopen, delete, and confirmed assistant changes all use this path. Ollama is not required.
+Open the same Mac-hosted Zenith URL and sign in to the same Zenith account on each device. Saved task changes appear immediately on the device making them; the authenticated event stream tells other open sessions to fetch the latest tasks. Create, edit, complete, reopen, delete, and confirmed assistant changes all use this path. Ollama is not required.
 
 Zenith catches up when the live stream reconnects, when the page becomes visible again, and when the browser comes back online. A 30-second check while the page is visible provides a fallback if live updates are interrupted or unsupported. The header shows the connection status. Task reads bypass browser caches, and late responses cannot overwrite a newer save. Failed saves keep the draft; a successful save followed by a failed refresh is not reported as an unsuccessful save.
 
-This updates the task list, counters, daily focus, and completion summary without reloading the page or clearing an unsaved capture draft. It is not offline editing or closed-app push: browsers may suspend background pages, and the Windows host must remain running and reachable. Calendar, memory, morning briefing, and weekly-plan panels still have their existing separate refresh behavior.
+This updates the task list, counters, daily focus, and completion summary without reloading the page or clearing an unsaved capture draft. It is not offline editing or closed-app push: browsers may suspend background pages, and the Mac host must remain running and reachable. Calendar, memory, morning briefing, and weekly-plan panels still have their existing separate refresh behavior.
 
-After updating the Windows checkout, restart Zenith and reload each device once to load the new client code. Verify on the real devices:
+After updating the Mac checkout, restart Zenith and reload each device once to load the new client code. Verify on the real devices:
 
-1. Open the same server URL on Windows and your Mac/phone; check for `Live sync connected`.
+1. Open the same server URL on the Mac and phone; check for `Live sync connected`.
 2. Capture a task on one device. It should appear on both without toggling completed tasks or refreshing.
 3. Edit, complete, reopen, and delete it from the other device; check the first device each time.
-4. Disconnect the phone temporarily, add a task on Windows, then reconnect and return to Zenith. The phone should catch up automatically.
+4. Disconnect the phone temporarily, add a task on the Mac, then reconnect and return to Zenith. The phone should catch up automatically.
 
 ### Verification
 
@@ -45,9 +45,9 @@ For an optional real-browser check, run `node scripts/verify-task-sync.mjs` in a
 
 ### PWA installation
 
-Zenith includes a web-app manifest and service worker. The static app shell can be installed as a PWA when served from a secure context. `http://localhost:3000` is suitable for local browser testing; a raw `http://100.x.x.x:3000` Tailscale address is usable across devices but browsers generally require HTTPS for PWA installation. Tailscale HTTPS/Serve setup is the next networking step. The service worker never caches `/api/` responses or private task data.
+Zenith includes a web-app manifest and service worker. The static app shell can be installed as a PWA when served from a secure context. `http://localhost:3000` is suitable for local browser testing; a raw `http://100.x.x.x:3000` Tailscale address is usable across devices but browsers generally require HTTPS for PWA installation. The Mac launcher provides the private HTTPS entry point for phone verification. The service worker never caches `/api/` responses or private task data.
 
-To use private HTTPS on the Windows home server, run `scripts\start-zenith-tailscale-https.ps1`. Tailscale Serve proxies the local Zenith port over the PC's private `https://...ts.net` address and leaves Zenith itself bound to localhost. The helper also sets the Google OAuth callback to that HTTPS address for the current session unless `GOOGLE_REDIRECT_URI` is already set. MagicDNS and HTTPS certificates must be enabled for the tailnet; Tailscale may open an approval page the first time. Use Tailscale Serve, not Funnel, for Zenith.
+For the Mac-hosted private HTTPS setup, run `zsh ./scripts/start-zenith-mac.sh`. Tailscale Serve proxies the local Zenith port over the Mac's private `https://...ts.net` address and leaves Zenith itself bound to localhost. The helper also sets the Google OAuth callback to that HTTPS address for the current session unless `GOOGLE_REDIRECT_URI` is already set. MagicDNS and HTTPS certificates must be enabled for the tailnet; Tailscale may open an approval page the first time. Use Tailscale Serve, not Funnel, for Zenith. Windows uses the equivalent PowerShell launcher during the final deployment step.
 
 ## API surface
 
@@ -79,7 +79,7 @@ On first launch, set a local display name and passphrase (at least 8 characters)
 
 ### Forgotten passphrase
 
-If you forget the local account credentials, stop Zenith and run this from the project folder on the Windows PC:
+If you forget the local account credentials, stop Zenith and run this from the project folder on the Mac host:
 
 ```powershell
 node scripts\reset-zenith-passphrase.js
@@ -89,7 +89,7 @@ The local tool displays the existing account name, asks for an explicit `RESET` 
 
 ### Google Calendar
 
-Calendar is optional. To enable it, create a Google Cloud OAuth web application with the Google Calendar API enabled, then set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` on the Windows Zenith server. `GOOGLE_REDIRECT_URI` can be set when the callback must use a specific address; otherwise the local callback defaults to `http://127.0.0.1:3000/api/calendar/oauth/callback`, so start authorization from the Windows PC. Keep the client secret outside the repository. Zenith requests the read-only Calendar scope, stores the connection in SQLite, refreshes access tokens as needed, and exposes only upcoming event details to the UI. If these settings are absent, tasks and the rest of Zenith continue working normally.
+Calendar is optional. To enable it, create a Google Cloud OAuth web application with the Google Calendar API enabled, then set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` on the Mac Zenith host. `GOOGLE_REDIRECT_URI` can be set when the callback must use a specific address; otherwise the local callback defaults to `http://127.0.0.1:3000/api/calendar/oauth/callback`, so start authorization from the Mac host. Keep the client secret outside the repository. Zenith requests the read-only Calendar scope, stores the connection in SQLite, refreshes access tokens as needed, and exposes only upcoming event details to the UI. If these settings are absent, tasks and the rest of Zenith continue working normally.
 
 ### Local voice input
 
