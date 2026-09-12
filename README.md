@@ -97,23 +97,16 @@ Calendar is optional. To enable it, create a Google Cloud OAuth web application 
 
 Voice input is optional and stays on the Zenith server. The server invokes an external command using `ZENITH_STT_COMMAND` and a JSON array in `ZENITH_STT_ARGS`; the array must contain `{input}` where the temporary recording path should be inserted.
 
-For the active M1 Mac host, use the Apple-Silicon MLX Whisper adapter. Install it in a separate voice environment and install `ffmpeg` if it is not already available:
+For the active M1 Mac host, use the Apple-Silicon MLX Whisper adapter. Install `ffmpeg`, then run the setup helper:
 
 ```zsh
-python3 -m venv backend/.venv-voice
-backend/.venv-voice/bin/python -m pip install mlx-whisper
 brew install ffmpeg
+zsh ./scripts/setup-zenith-mac-voice.sh
 ```
 
-Then add these lines to `.env`:
+The launcher detects this environment automatically; no `.env` changes are required. The first transcription downloads the selected MLX model from the model host; later transcriptions run locally.
 
-```text
-ZENITH_STT_COMMAND=/Users/sharan/Documents/Zenith/backend/.venv-voice/bin/python
-ZENITH_STT_ARGS=["scripts/mlx-whisper-transcribe.py","{input}"]
-ZENITH_WHISPER_MODEL=mlx-community/whisper-base-mlx
-```
-
-The first transcription downloads the selected MLX model from the model host; later transcriptions run locally. `mlx-community/whisper-base-mlx` is a practical starting point for an M1 Mac. Use `mlx-community/whisper-tiny` for a smaller/faster test or set `ZENITH_WHISPER_LANGUAGE` when the spoken language is known.
+`mlx-community/whisper-base-mlx` is a practical starting point for an M1 Mac. Use `mlx-community/whisper-tiny` for a smaller/faster test or set `ZENITH_WHISPER_LANGUAGE` when the spoken language is known.
 
 For the included adapter on Windows, create a Python virtual environment, install `faster-whisper`, then set:
 
