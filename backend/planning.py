@@ -2,6 +2,7 @@
 
 import re
 from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .calendar import GoogleCalendar
 from .database import Database
@@ -43,6 +44,16 @@ def summary_window(day: str, offset: int) -> tuple[str, str]:
     except (ValueError, OverflowError):
         raise ApiError(400, "Summary date is outside the supported range.") from None
     return tuple(value.isoformat(timespec="milliseconds").replace("+00:00", "Z") for value in (start, end))
+
+
+def calendar_window(day: str, days: int, timezone_name: str) -> tuple[str, str]:
+    try:
+        local_zone = ZoneInfo(timezone_name or "UTC")
+        start = datetime.combine(date.fromisoformat(day), time(), local_zone)
+        end = datetime.combine(date.fromisoformat(add_days(day, days)), time(), local_zone)
+        return start.isoformat(timespec="minutes"), end.isoformat(timespec="minutes")
+    except (ValueError, TypeError, OverflowError, ZoneInfoNotFoundError):
+        raise ApiError(400, "Planning timezone must be a valid IANA timezone.") from None
 
 
 class Planning:
@@ -110,14 +121,15 @@ class Planning:
             })
         return recommendations[:5]
 
-    def morning(self, user_id: str, day: str) -> dict:
+    def morning(self, user_id: str, day: str, timezone_name: str = "UTC") -> dict:
         opened = [task for task in self.database.list_tasks(user_id) if not task["completed"]]
         overdue = [task for task in opened if task["dueDate"] and task["dueDate"] < day]
         due_today = [task for task in opened if task["dueDate"] == day]
         horizon = add_days(day, 4)
         upcoming = sorted((task for task in opened if task["dueDate"] and day < task["dueDate"] < horizon),
                           key=lambda task: task["dueDate"])[:5]
-        calendar = self.calendar(user_id, f"{day}T00:00:00Z", f"{add_days(day, 1)}T00:00:00Z")
+        calendar_start, calendar_end = calendar_window(day, 1, timezone_name)
+        calendar = self.calendar(user_id, calendar_start, calendar_end)
         parts = []
         if overdue:
             parts.append(f"{len(overdue)} overdue")
@@ -129,7 +141,7 @@ class Planning:
         return {"date": day, "summary": " · ".join(parts) if parts else "No urgent items this morning.",
                 "overdue": overdue, "dueToday": due_today, "upcoming": upcoming, "calendar": calendar}
 
-    def weekly(self, user_id: str, start: str) -> dict:
+    def weekly(self, user_id: str, start: str, timezone_name: str = "UTC") -> dict:
         opened = [task for task in self.database.list_tasks(user_id) if not task["completed"]]
         end = add_days(start, 7)
         scheduled = [task for task in opened if task["dueDate"] and start <= task["dueDate"] < end]
@@ -137,10 +149,11 @@ class Planning:
         unscheduled = [task for task in opened if not task["dueDate"]]
         days = [{"date": day, "tasks": [task for task in scheduled if task["dueDate"] == day]}
                 for day in (add_days(start, index) for index in range(7))]
+        calendar_start, calendar_end = calendar_window(start, 7, timezone_name)
         return {"start": start, "end": end,
                 "counts": {"open": len(opened), "overdue": len(overdue), "scheduled": len(scheduled), "unscheduled": len(unscheduled)},
                 "days": days, "unscheduled": unscheduled,
-                "calendar": self.calendar(user_id, f"{start}T00:00:00Z", f"{end}T00:00:00Z")}
+                "calendar": self.calendar(user_id, calendar_start, calendar_end)}
 
     def daily_summary(self, user_id: str, day: str, offset: int) -> dict:
         start, end = summary_window(day, offset)

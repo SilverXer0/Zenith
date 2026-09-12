@@ -72,8 +72,8 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
       const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
       const [nextBriefing, nextMorning, nextWeek, nextSummary, nextCalendar, nextConnections, nextAvailability] = await Promise.all([
         api<Briefing>("/api/briefing?date=" + today),
-        api<MorningBriefing>("/api/briefing/morning?date=" + today),
-        api<WeeklyPlan>("/api/weekly-plan?start=" + today),
+        api<MorningBriefing>("/api/briefing/morning?date=" + today + "&timezone=" + encodeURIComponent(browserTimezone)),
+        api<WeeklyPlan>("/api/weekly-plan?start=" + today + "&timezone=" + encodeURIComponent(browserTimezone)),
         api<DailySummary>("/api/summaries/daily?date=" + today + "&offset=" + new Date().getTimezoneOffset()),
         api<CalendarStatus>("/api/calendar/status"),
         api<{ connections: CalendarConnection[] }>("/api/calendar/connections"),

@@ -242,12 +242,15 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         return planning.briefing(current_user["id"], planning_date(day))
 
     @app.get("/api/briefing/morning")
-    def morning_briefing(day: str | None = Query(default=None, alias="date"), current_user: dict = Depends(user)):
-        return planning.morning(current_user["id"], planning_date(day))
+    def morning_briefing(day: str | None = Query(default=None, alias="date"),
+                         timezone: str = Query(default="UTC", max_length=80),
+                         current_user: dict = Depends(user)):
+        return planning.morning(current_user["id"], planning_date(day), timezone.strip())
 
     @app.get("/api/weekly-plan")
-    def weekly_plan(start: str | None = None, current_user: dict = Depends(user)):
-        return planning.weekly(current_user["id"], weekly_start(start))
+    def weekly_plan(start: str | None = None, timezone: str = Query(default="UTC", max_length=80),
+                    current_user: dict = Depends(user)):
+        return planning.weekly(current_user["id"], weekly_start(start), timezone.strip())
 
     @app.get("/api/planning/availability")
     def planning_availability(date: str | None = None, timezone: str = "UTC",

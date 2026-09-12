@@ -321,6 +321,29 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual([event["title"] for event in availability["conflicts"][0]["events"]],
                          ["Planning", "Overlapping call"])
 
+    def test_morning_and_weekly_calendar_ranges_follow_requested_timezone(self):
+        self.configure()
+        self.connect()
+        self.mock.requests.clear()
+
+        morning = self.client.get("/api/briefing/morning",
+                                  params={"date": "2026-09-04", "timezone": "America/Los_Angeles"})
+        self.assertEqual(morning.status_code, 200)
+        weekly = self.client.get("/api/weekly-plan",
+                                 params={"start": "2026-09-04", "timezone": "America/Los_Angeles"})
+        self.assertEqual(weekly.status_code, 200)
+
+        event_requests = [item for item in self.mock.requests if "/events?" in item["path"]]
+        self.assertEqual(len(event_requests), 2)
+        morning_query = parse_qs(urlparse(event_requests[0]["path"]).query)
+        weekly_query = parse_qs(urlparse(event_requests[1]["path"]).query)
+        self.assertEqual(morning_query["timeMin"], ["2026-09-04T07:00:00.000Z"])
+        self.assertEqual(morning_query["timeMax"], ["2026-09-05T07:00:00.000Z"])
+        self.assertEqual(weekly_query["timeMin"], ["2026-09-04T07:00:00.000Z"])
+        self.assertEqual(weekly_query["timeMax"], ["2026-09-11T07:00:00.000Z"])
+        self.assertEqual(self.client.get("/api/briefing/morning",
+                                         params={"date": "2026-09-04", "timezone": "Not/AZone"}).status_code, 400)
+
     def test_availability_recommends_urgent_tasks_that_fit_open_windows(self):
         self.configure()
         self.mock.events = [
