@@ -94,7 +94,7 @@ export default function Dashboard() {
   const [editDraft, setEditDraft] = useState<Draft>(blankDraft);
   const [taskError, setTaskError] = useState("");
   const [live, setLive] = useState(false);
-  const [today] = useState(displayDate);
+  const [today, setToday] = useState(displayDate);
   const [assistantStatus, setAssistantStatus] = useState("Checking local assistant…");
   const [assistantModel, setAssistantModel] = useState<string | null>(null);
   const [assistantInput, setAssistantInput] = useState("");
@@ -105,6 +105,12 @@ export default function Dashboard() {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [authError, setAuthError] = useState("");
   const loadVersion = useRef(0);
+
+  useEffect(() => {
+    if (!user) return;
+    const interval = window.setInterval(() => setToday(displayDate()), 60_000);
+    return () => window.clearInterval(interval);
+  }, [user]);
 
   useEffect(() => {
     api<{ reachable: boolean; model: string | null }>("/api/assistant/status")
