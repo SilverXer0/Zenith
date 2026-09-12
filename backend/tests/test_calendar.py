@@ -177,6 +177,10 @@ class CalendarTests(unittest.TestCase):
             self.assertNotIn("secret", response.text.lower())
         self.assertEqual(self.client.post("/api/tasks", json={"title": "Works without Calendar"}).status_code, 201)
 
+    def test_default_callback_uses_frontend_proxy_port(self):
+        self.assertEqual(GoogleCalendar(self.database).redirect_uri(),
+                         "http://127.0.0.1:3000/api/calendar/oauth/callback")
+
     def test_oauth_events_planning_disconnect_and_node_compatibility(self):
         self.configure()
         self.mock.paginated = True

@@ -73,7 +73,7 @@ class GoogleCalendar:
         return bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
 
     def redirect_uri(self) -> str:
-        return os.environ.get("GOOGLE_REDIRECT_URI") or "http://127.0.0.1:8000/api/calendar/oauth/callback"
+        return os.environ.get("GOOGLE_REDIRECT_URI") or "http://127.0.0.1:3000/api/calendar/oauth/callback"
 
     def status(self, user_id: str) -> dict:
         account = self.database.calendar_account(user_id)
