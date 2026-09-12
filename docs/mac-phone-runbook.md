@@ -32,7 +32,7 @@ Stop any other Zenith server first. Run:
 zsh ./scripts/start-zenith-mac.sh
 ~~~
 
-The launcher automatically loads private settings from `.env`, checks that Node.js 20.9+ is active, starts the Python API and Next frontend on localhost, rebuilds the current frontend, configures private Tailscale HTTPS, and prints the exact URL. Keep the terminal open. On first use, copy `.env.example` to `.env` and fill in the Google OAuth values.
+The launcher automatically loads private settings from `.env`, checks that Node.js 20.9+ is active, starts the Python API and Next frontend on localhost, rebuilds the current frontend, configures private Tailscale HTTPS, enables built-in Mac speech output, and prints the exact URL. Keep the terminal open. On first use, copy `.env.example` to `.env` and fill in the Google OAuth values.
 
 On the Mac and phone:
 
@@ -83,7 +83,7 @@ Set `OLLAMA_AUTOSTART=false` in `.env` to disable this launcher behavior. To ins
 
 For Google Calendar, put the OAuth values in `.env` before launching Zenith. The redirect URI is the printed Tailscale URL plus `/api/calendar/oauth/callback`; leave `GOOGLE_REDIRECT_URI` commented so the launcher can derive it automatically.
 
-To enable Mac speech output, add these lines to `.env`:
+Mac speech output is enabled automatically with the built-in `say` and `afconvert` tools. To override it with another local adapter, add these lines to `.env`:
 
 ~~~text
 ZENITH_TTS_COMMAND=/absolute/path/to/Zenith/backend/.venv/bin/python
@@ -100,7 +100,7 @@ backend/.venv-voice/bin/python -m pip install mlx-whisper
 brew install ffmpeg
 ~~~
 
-Then add `ZENITH_STT_COMMAND=/Users/sharan/Documents/Zenith/backend/.venv-voice/bin/python`, `ZENITH_STT_ARGS=["scripts/mlx-whisper-transcribe.py","{input}"]`, and `ZENITH_WHISPER_MODEL=mlx-community/whisper-base-mlx` to `.env`. The first transcription downloads the model; transcription afterward remains local. Restart the launcher after changing `.env`.
+Then add `ZENITH_STT_COMMAND=/Users/sharan/Documents/Zenith/backend/.venv-voice/bin/python`, `ZENITH_STT_ARGS=["scripts/mlx-whisper-transcribe.py","{input}"]`, and `ZENITH_WHISPER_MODEL=mlx-community/whisper-base-mlx` to `.env`. The launcher detects this setup automatically; the first transcription downloads the model and transcription afterward remains local. Restart the launcher after changing `.env`.
 
 The launcher’s Ollama startup is intentionally local-only. The OAuth secret stays outside Git, and Zenith still starts normally when Ollama is unavailable.
 

@@ -7,6 +7,9 @@ backend="$root/backend"
 frontend="$root/frontend"
 python="$backend/.venv/bin/python"
 
+# LaunchAgent and manual launches should share the same project-relative paths.
+cd "$root"
+
 # Load private Mac settings once per launch. The default file is ignored by
 # Git; ZENITH_CONFIG_FILE can point to a different local file when needed.
 config_file="${ZENITH_CONFIG_FILE:-$root/.env}"
@@ -54,6 +57,23 @@ fi
 # The Mac host uses a small local Qwen model by default. Keep an explicit
 # environment override available for testing another installed model.
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"
+
+# macOS already ships local speech output. Expose it automatically unless the
+# user has explicitly configured another adapter in .env.
+if [[ -z "${ZENITH_TTS_COMMAND:-}" && -x "/usr/bin/say" && -x "/usr/bin/afconvert" ]]; then
+  export ZENITH_TTS_COMMAND="$python"
+  export ZENITH_TTS_ARGS='["scripts/macos-say-speak.py","{text}","{output}"]'
+fi
+
+# Speech input remains optional. Only advertise it when the separate MLX
+# environment and its decoder dependency are actually installed.
+voice_python="$backend/.venv-voice/bin/python"
+if [[ -z "${ZENITH_STT_COMMAND:-}" && -x "$voice_python" ]] \
+   && command -v ffmpeg >/dev/null 2>&1 \
+   && "$voice_python" -c 'import mlx_whisper' >/dev/null 2>&1; then
+  export ZENITH_STT_COMMAND="$voice_python"
+  export ZENITH_STT_ARGS='["scripts/mlx-whisper-transcribe.py","{input}"]'
+fi
 
 ollama_pid=""
 ollama_started=false

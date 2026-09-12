@@ -122,14 +122,14 @@ $env:ZENITH_STT_ARGS='["scripts\whisper-transcribe.py","{input}"]'
 
 The adapter defaults to the `base.en` model on CUDA with FP16. Set `ZENITH_WHISPER_MODEL`, `ZENITH_WHISPER_DEVICE`, `ZENITH_WHISPER_COMPUTE_TYPE`, or `ZENITH_WHISPER_LANGUAGE` to adjust it. The first transcription downloads the selected model; subsequent transcription is local. `faster-whisper` supports GPU execution with `device="cuda"` and `compute_type="float16"`; its current Windows GPU requirements are documented in the project's [official README](https://github.com/SYSTRAN/faster-whisper#requirements).
 
-For local speech output on Windows, the included `scripts\pyttsx3-speak.py` adapter uses the local speech engine and writes a temporary WAV file. On the Mac, the included `scripts/macos-say-speak.py` adapter uses the built-in `say` and `afconvert` tools, so no extra speech package is required. Configure the Mac adapter alongside speech-to-text:
+For local speech output on Windows, the included `scripts\pyttsx3-speak.py` adapter uses the local speech engine and writes a temporary WAV file. On the Mac, the launcher automatically enables the included `scripts/macos-say-speak.py` adapter when the built-in `say` and `afconvert` tools are available, so no extra speech package is required. To configure it explicitly or override it, use:
 
 ```zsh
 export ZENITH_TTS_COMMAND="$PWD/backend/.venv/bin/python"
 export ZENITH_TTS_ARGS='["scripts/macos-say-speak.py","{text}","{output}"]'
 ```
 
-The adapter speaks locally on the Mac and returns on-demand WAV audio; it does not send text to a hosted service or store audio. The Mac launcher loads these settings from `.env`, so move the two values there after testing.
+The adapter speaks locally on the Mac and returns on-demand WAV audio; it does not send text to a hosted service or store audio. The Mac launcher loads explicit settings from `.env`; otherwise it supplies the native Mac defaults automatically.
 
 For the Windows adapter, configure it alongside speech-to-text:
 
