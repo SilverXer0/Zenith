@@ -16,6 +16,7 @@ from .calendar import GoogleCalendar
 from .database import Database
 from .errors import ApiError
 from .models import AssistantChatInput, AssistantUnloadInput, TaskPatch
+from .planning import Planning, planning_date
 
 
 MAX_OLLAMA_BYTES = 4 * 1024 * 1024
@@ -269,6 +270,7 @@ class LocalAssistant:
             "category": memory["category"], "content": memory["content"],
         }, 12000, "No persistent context has been saved.")
         calendar_context = self.google_calendar.assistant_context(user_id)[:8000]
+        schedule_context = self._schedule_context(user_id, request)
         schema = json.dumps(RESPONSE_SCHEMA, separators=(",", ":"))
         system = f"""You are Zenith, a calm local personal manager and chief of staff, not an autonomous executor.
 Use the signed-in user's tasks, context, and calendar to answer concisely and help them decide what to do next.
@@ -286,7 +288,10 @@ PERSISTENT CONTEXT (JSON Lines):
 {memory_context}
 
 GOOGLE CALENDAR:
-{calendar_context}"""
+{calendar_context}
+
+LOCAL AVAILABILITY AND TASK FITS:
+{schedule_context}"""
         history = [{"role": item.role, "content": item.content} for item in request.history]
         payload = {"model": model, "stream": False, "format": RESPONSE_SCHEMA,
                    "keep_alive": _keep_alive(),
@@ -312,6 +317,27 @@ GOOGLE CALENDAR:
             raise ApiError(503, "Local assistant is unavailable.")
         actions = normalize_actions(parsed.get("actions"), tasks) if isinstance(parsed, dict) else []
         return {"message": reply, "actions": actions, "model": model}
+
+    def _schedule_context(self, user_id: str, request: AssistantChatInput) -> str:
+        try:
+            day = planning_date(request.date)
+            timezone_name = request.timezone or "UTC"
+            availability = Planning(self.database, self.google_calendar).availability(user_id, day, timezone_name)
+        except ApiError:
+            return "Local availability is unavailable for this request."
+        if not availability.get("available"):
+            return "Local availability is unavailable because Google Calendar is not connected or temporarily unavailable."
+        return json.dumps({
+            "date": availability["date"],
+            "timezone": availability["timezone"],
+            "workday": availability["workday"],
+            "freeWindows": availability["freeWindows"][:8],
+            "recommendations": [{
+                "taskId": item["task"]["id"], "title": item["task"]["title"],
+                "estimatedMinutes": item["estimatedMinutes"],
+                "usesDefaultEstimate": item["usesDefaultEstimate"], "window": item["window"],
+            } for item in availability["recommendations"][:5]],
+        }, ensure_ascii=False, separators=(",", ":"))
 
     def apply_actions(self, user_id: str, actions: list[dict]) -> list[dict]:
         normalized = normalize_actions(actions, self.database.list_tasks(user_id))

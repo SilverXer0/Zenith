@@ -81,6 +81,8 @@ class AssistantChatInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     message: str = Field(min_length=1, max_length=4000)
     history: list[AssistantHistoryItem] = Field(default_factory=list)
+    date: str | None = Field(default=None, max_length=10)
+    timezone: str | None = Field(default=None, max_length=80)
 
     @field_validator("message", mode="before")
     @classmethod
@@ -91,6 +93,11 @@ class AssistantChatInput(BaseModel):
     @classmethod
     def cap_history(cls, value):
         return value[-8:] if isinstance(value, list) else value
+
+    @field_validator("date", "timezone", mode="before")
+    @classmethod
+    def trim_location(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 class AssistantActionsInput(BaseModel):

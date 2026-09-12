@@ -198,7 +198,8 @@ export default function Dashboard() {
     const userEntry: ChatEntry = { id: crypto.randomUUID(), role: "user", content: message };
     setChat((current) => [...current, userEntry]);
     try {
-      const result = await api<AssistantResult>("/api/assistant/chat", { method: "POST", json: { message, history: assistantHistory } });
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const result = await api<AssistantResult>("/api/assistant/chat", { method: "POST", json: { message, history: assistantHistory, date: localDateKey(), timezone } });
       setAssistantModel(result.model);
       setAssistantHistory((current) => [...current, { role: "user" as const, content: message }, { role: "assistant" as const, content: result.message }].slice(-8));
       setChat((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: result.message, actions: result.actions }]);

@@ -225,6 +225,29 @@ class AssistantTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM task_completion_events WHERE user_id=?",
                                                 (self.user_id,)).fetchone()[0], 1)
 
+    def test_chat_receives_local_availability_and_task_fit_context(self):
+        self.configure()
+        availability = {
+            "date": "2026-09-04", "timezone": "America/Los_Angeles", "available": True,
+            "workday": {"start": "2026-09-04T08:00-07:00", "end": "2026-09-04T20:00-07:00"},
+            "freeWindows": [{"start": "2026-09-04T18:00-07:00", "end": "2026-09-04T20:00-07:00", "durationMinutes": 120}],
+            "recommendations": [{"task": {"id": "task-1", "title": "Finish report"},
+                                  "estimatedMinutes": 60, "usesDefaultEstimate": False,
+                                  "window": {"start": "2026-09-04T18:00-07:00", "end": "2026-09-04T20:00-07:00", "durationMinutes": 120}}],
+        }
+        with patch("backend.assistant.Planning.availability", return_value=availability):
+            response = self.client.post("/api/assistant/chat", json={
+                "message": "What should I work on tonight?",
+                "date": "2026-09-04", "timezone": "America/Los_Angeles",
+            })
+        self.assertEqual(response.status_code, 200, response.text)
+        chat = next(item["body"] for item in self.mock.requests if item["path"] == "/api/chat")
+        system = chat["messages"][0]["content"]
+        self.assertIn("LOCAL AVAILABILITY AND TASK FITS", system)
+        self.assertIn("Finish report", system)
+        self.assertIn("America/Los_Angeles", system)
+        self.assertIn("2026-09-04T18:00-07:00", system)
+
     def test_confirmed_actions_are_strict_current_owned_and_atomic(self):
         first = self.task("Original")
         second = self.task("Second")
