@@ -89,7 +89,7 @@ The local tool displays the existing account name, asks for an explicit `RESET` 
 
 ### Google Calendar
 
-Calendar is optional. To enable it, create a Google Cloud OAuth web application with the Google Calendar API enabled, then copy `.env.example` to `.env` on the Mac and fill in `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. The Mac launcher loads that ignored file automatically and derives `GOOGLE_REDIRECT_URI` from the current Tailscale URL unless a fixed value is supplied. Keep the client secret outside the repository. Zenith requests the read-only Calendar scope, stores the connection in SQLite, refreshes access tokens as needed, and exposes only upcoming event details to the UI. If these settings are absent, tasks and the rest of Zenith continue working normally.
+Calendar is optional. To enable it, create a Google Cloud OAuth web application with the Google Calendar API enabled, then copy `.env.example` to `.env` on the Mac and fill in `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. The Mac launcher loads that ignored file automatically and derives `GOOGLE_REDIRECT_URI` from the current Tailscale URL unless a fixed value is supplied. Keep the client secret outside the repository. Zenith requests the read-only Calendar scope, stores the connection in SQLite, refreshes access tokens as needed, and exposes only upcoming event details to the UI. The current slice supports one Google connection per Zenith account; multiple named account/calendar connections are planned next. If these settings are absent, tasks and the rest of Zenith continue working normally.
 
 ### Local voice input
 
