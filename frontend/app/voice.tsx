@@ -5,11 +5,12 @@ import { api, apiBlob } from "../lib/api";
 
 type VoiceInputProps = {
   enabled: boolean;
+  disabled?: boolean;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
 };
 
-export function VoiceInputButton({ enabled, onTranscript, onError }: VoiceInputProps) {
+export function VoiceInputButton({ enabled, disabled = false, onTranscript, onError }: VoiceInputProps) {
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -31,7 +32,7 @@ export function VoiceInputButton({ enabled, onTranscript, onError }: VoiceInputP
   }
 
   async function start() {
-    if (!enabled || recording || busy) return;
+    if (!enabled || disabled || recording || busy) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       onError("This browser does not support microphone recording.");
       return;
@@ -67,7 +68,7 @@ export function VoiceInputButton({ enabled, onTranscript, onError }: VoiceInputP
   }
 
   if (!enabled) return <span className="muted text-xs">Voice input not configured</span>;
-  return <button className="quiet-button whitespace-nowrap" type="button" onClick={() => (recording ? stop() : void start())} disabled={busy}>{busy ? "Transcribing…" : recording ? "Stop recording" : "Use microphone"}</button>;
+  return <button className="quiet-button whitespace-nowrap" type="button" onClick={() => (recording ? stop() : void start())} disabled={busy || disabled}>{busy ? "Transcribing…" : recording ? "Stop recording" : "Use microphone"}</button>;
 }
 
 export function SpeakButton({ enabled, text, onError }: { enabled: boolean; text: string; onError: (message: string) => void }) {

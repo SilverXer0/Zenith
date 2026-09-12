@@ -131,7 +131,7 @@ export ZENITH_TTS_COMMAND="$PWD/backend/.venv/bin/python"
 export ZENITH_TTS_ARGS='["scripts/macos-say-speak.py","{text}","{output}"]'
 ```
 
-The adapter speaks locally on the Mac and returns on-demand WAV audio; it does not send text to a hosted service or store audio. The Mac launcher loads explicit settings from `.env`; otherwise it supplies the native Mac defaults automatically.
+The adapter speaks locally on the Mac and returns on-demand WAV audio; it does not send text to a hosted service or store audio. The Mac launcher loads explicit settings from `.env`; otherwise it supplies the native Mac defaults automatically. When speech-to-text is configured, the assistant can either place the transcript in the text box for review or ask automatically when the user enables `Ask automatically`; task suggestions still require confirmation.
 
 For the Windows adapter, configure it alongside speech-to-text:
 
