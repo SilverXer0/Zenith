@@ -81,6 +81,7 @@ ollama_path="$(command -v ollama || true)"
 if [[ -z "$ollama_path" && -x "/Applications/Ollama.app/Contents/Resources/ollama" ]]; then
   ollama_path="/Applications/Ollama.app/Contents/Resources/ollama"
 fi
+ollama_url="${OLLAMA_URL:-http://127.0.0.1:11434}"
 
 allowed_origins=("http://localhost:3000" "http://127.0.0.1:3000")
 tailscale_path=""
@@ -125,7 +126,7 @@ api_error_log="$data_dir/zenith-python-api.error.log"
 ollama_log="$data_dir/ollama.log"
 ollama_error_log="$data_dir/ollama.error.log"
 
-if [[ "${OLLAMA_AUTOSTART:-true}" != "false" && "${OLLAMA_URL:-http://127.0.0.1:11434}" == "http://127.0.0.1:11434" ]]; then
+if [[ "${OLLAMA_AUTOSTART:-true}" != "false" && "$ollama_url" == "http://127.0.0.1:11434" ]]; then
   if curl --silent --fail --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     print "Ollama is already running."
   elif [[ -z "$ollama_path" ]]; then
@@ -152,7 +153,7 @@ elif [[ "${OLLAMA_AUTOSTART:-true}" == "false" ]]; then
   print "Ollama autostart is disabled; Zenith will use the assistant only if Ollama is already running."
 fi
 
-ollama_tags="$(curl --silent --fail --max-time 2 http://127.0.0.1:11434/api/tags 2>/dev/null || true)"
+ollama_tags="$(curl --silent --fail --max-time 2 "$ollama_url/api/tags" 2>/dev/null || true)"
 if [[ -n "$ollama_tags" ]]; then
   if print -r -- "$ollama_tags" | "$python" -c 'import json, os, sys; model = os.environ["OLLAMA_MODEL"]; payload = json.load(sys.stdin); raise SystemExit(0 if any(item.get("name") == model for item in payload.get("models", [])) else 1)' 2>/dev/null; then
     print "Ollama is ready with $OLLAMA_MODEL."
