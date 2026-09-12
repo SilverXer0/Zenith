@@ -16,8 +16,14 @@ export function PwaRegistration() {
 
 export function InstallButton() {
   const [prompt, setPrompt] = useState<InstallPrompt | null>(null);
+  const [ios, setIos] = useState(false);
+  const [installed, setInstalled] = useState(false);
+  const [showIosHelp, setShowIosHelp] = useState(false);
 
   useEffect(() => {
+    const userAgent = navigator.userAgent || "";
+    setIos(/iPhone|iPad|iPod/.test(userAgent) || (userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1));
+    setInstalled(window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
     const capture = (event: Event) => {
       event.preventDefault();
       setPrompt(event as InstallPrompt);
@@ -33,6 +39,8 @@ export function InstallButton() {
     setPrompt(null);
   }
 
-  if (!prompt) return null;
-  return <button className="quiet-button" type="button" onClick={() => void install()}>Install Zenith</button>;
+  if (installed) return null;
+  if (prompt) return <button className="quiet-button" type="button" onClick={() => void install()}>Install Zenith</button>;
+  if (!ios) return null;
+  return <div className="flex items-center gap-2"><button className="quiet-button" type="button" onClick={() => setShowIosHelp((value) => !value)}>Install Zenith</button>{showIosHelp && <span className="muted text-xs">Tap Share, then Add to Home Screen.</span>}</div>;
 }
