@@ -32,7 +32,7 @@ Stop any other Zenith server first. Run:
 zsh ./scripts/start-zenith-mac.sh
 ~~~
 
-The launcher starts the Python API and Next frontend on localhost, configures private Tailscale HTTPS, and prints the exact URL. Keep the terminal open. Automatic loading of persistent Google/Ollama settings is a tracked follow-up; for now, credentials must be exported in the same terminal session.
+The launcher automatically loads private settings from `.env`, starts the Python API and Next frontend on localhost, configures private Tailscale HTTPS, and prints the exact URL. Keep the terminal open. On first use, copy `.env.example` to `.env` and fill in the Google OAuth values.
 
 On the Mac and phone:
 
@@ -61,9 +61,9 @@ export OLLAMA_MODEL="another-installed-model"
 zsh ./scripts/start-zenith-mac.sh
 ~~~
 
-For Google Calendar, set the OAuth values in the same terminal before launching Zenith. The redirect URI is the printed Tailscale URL plus `/api/calendar/oauth/callback`.
+For Google Calendar, put the OAuth values in `.env` before launching Zenith. The redirect URI is the printed Tailscale URL plus `/api/calendar/oauth/callback`; leave `GOOGLE_REDIRECT_URI` commented so the launcher can derive it automatically.
 
-Persistent credential loading and one-command Ollama startup are planned next. They will remain local-only conveniences: the OAuth secret will stay outside Git, and Zenith will still start normally when Ollama is unavailable.
+One-command Ollama startup remains planned. For now, the launcher reads `OLLAMA_MODEL="qwen3:4b"` from `.env`, but Ollama itself must already be running. The OAuth secret stays outside Git, and Zenith still starts normally when Ollama is unavailable.
 
 The API logs are written to `data/zenith-python-api.log` and `data/zenith-python-api.error.log`.
 

@@ -7,6 +7,15 @@ backend="$root/backend"
 frontend="$root/frontend"
 python="$backend/.venv/bin/python"
 
+# Load private Mac settings once per launch. The default file is ignored by
+# Git; ZENITH_CONFIG_FILE can point to a different local file when needed.
+config_file="${ZENITH_CONFIG_FILE:-$root/.env}"
+if [[ -f "$config_file" ]]; then
+  set -a
+  source "$config_file"
+  set +a
+fi
+
 if [[ ! -x "$python" ]]; then
   print -u2 "Python setup is missing. Create backend/.venv and install backend/requirements.txt first."
   exit 1
