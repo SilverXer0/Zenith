@@ -43,6 +43,14 @@ On the Mac and phone:
 
 Do not add `:3000` to the HTTPS URL. Tailscale Serve forwards the private HTTPS address to Zenith's local port 3000.
 
+To inspect the Mac setup without changing anything, run:
+
+~~~zsh
+zsh ./scripts/check-zenith-mac.sh
+~~~
+
+It checks the required runtimes, local API/frontend, private configuration, Tailscale, Ollama, native Mac speech, optional Whisper, and the login agent. Warnings for Ollama, Calendar, Whisper, or the login agent are expected when those optional pieces are not enabled; it never prints secrets or modifies configuration.
+
 ## Optional start at Mac login
 
 After manually stopping any running Zenith launcher, install the optional macOS LaunchAgent:

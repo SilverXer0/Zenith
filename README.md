@@ -22,6 +22,8 @@ Open http://localhost:3000. Tasks persist in `data/zenith.sqlite` (or `ZENITH_DA
 
 For the active Mac-hosted setup, install Tailscale on the Mac and each device that should access Zenith, then sign in to the same private tailnet. From the Zenith folder, run `zsh ./scripts/start-zenith-mac.sh`. The helper binds Zenith's local services behind a private HTTPS Tailscale address and prints the URL to open on your phone. This keeps Zenith off the public internet; do not port-forward port 3000. If you want Zenith to start at Mac login, use the optional `zsh ./scripts/install-zenith-mac-agent.sh` installer described in the Mac/phone runbook.
 
+Use `zsh ./scripts/check-zenith-mac.sh` for a read-only diagnostic summary when troubleshooting the Mac host. It does not print private configuration values or change any services.
+
 ### Live task updates
 
 Open the same Mac-hosted Zenith URL and sign in to the same Zenith account on each device. Saved task changes appear immediately on the device making them; the authenticated event stream tells other open sessions to fetch the latest tasks. Create, edit, complete, reopen, delete, and confirmed assistant changes all use this path. Ollama is not required.
