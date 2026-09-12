@@ -107,6 +107,23 @@ export default function Dashboard() {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [authError, setAuthError] = useState("");
   const loadVersion = useRef(0);
+  const voicePreferencesLoaded = useRef(false);
+
+  useEffect(() => {
+    try {
+      setVoiceAutoAsk(window.localStorage.getItem("zenith-voice-auto-ask") === "true");
+      setVoiceAutoSpeak(window.localStorage.getItem("zenith-voice-auto-speak") === "true");
+    } catch { /* Some private browsing modes deny local storage access. */ }
+    voicePreferencesLoaded.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!voicePreferencesLoaded.current) return;
+    try {
+      window.localStorage.setItem("zenith-voice-auto-ask", String(voiceAutoAsk));
+      window.localStorage.setItem("zenith-voice-auto-speak", String(voiceAutoSpeak));
+    } catch { /* Voice preferences are convenience settings, not required state. */ }
+  }, [voiceAutoAsk, voiceAutoSpeak]);
 
   useEffect(() => {
     const handleAuthExpired = () => {
