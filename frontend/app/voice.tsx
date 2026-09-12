@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiBlob } from "../lib/api";
 
 type VoiceInputProps = {
@@ -71,10 +71,11 @@ export function VoiceInputButton({ enabled, disabled = false, onTranscript, onEr
   return <button className="quiet-button whitespace-nowrap" type="button" onClick={() => (recording ? stop() : void start())} disabled={busy || disabled}>{busy ? "Transcribing…" : recording ? "Stop recording" : "Use microphone"}</button>;
 }
 
-export function SpeakButton({ enabled, text, onError }: { enabled: boolean; text: string; onError: (message: string) => void }) {
+export function SpeakButton({ enabled, text, onError, autoPlay = false }: { enabled: boolean; text: string; onError: (message: string) => void; autoPlay?: boolean }) {
   const [playing, setPlaying] = useState(false);
+  const autoAttempted = useRef(false);
 
-  async function speak() {
+  const speak = useCallback(async () => {
     if (!enabled || playing) return;
     setPlaying(true);
     let url = "";
@@ -88,9 +89,18 @@ export function SpeakButton({ enabled, text, onError }: { enabled: boolean; text
     } catch (caught) {
       if (url) URL.revokeObjectURL(url);
       setPlaying(false);
-      onError(caught instanceof Error ? caught.message : "The spoken reply could not be created.");
+      onError(caught instanceof Error && caught.name === "NotAllowedError"
+        ? "Browser blocked automatic playback. Tap Speak reply to hear it."
+        : caught instanceof Error ? caught.message : "The spoken reply could not be created.");
     }
-  }
+  }, [enabled, onError, playing, text]);
+
+  useEffect(() => {
+    if (autoPlay && !autoAttempted.current) {
+      autoAttempted.current = true;
+      void speak();
+    }
+  }, [autoPlay, speak]);
 
   if (!enabled) return null;
   return <button className="quiet-button mt-3 text-xs" type="button" onClick={() => void speak()} disabled={playing}>{playing ? "Speaking…" : "Speak reply"}</button>;

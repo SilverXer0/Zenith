@@ -8,7 +8,7 @@ import { ReminderControls } from "./notifications";
 import { SpeakButton, VoiceInputButton } from "./voice";
 
 type Draft = { title: string; notes: string; project: string; priority: Priority; dueDate: string; estimatedMinutes: string };
-type ChatEntry = { id: string; role: "user" | "assistant"; content: string; actions?: AssistantAction[]; applied?: boolean };
+type ChatEntry = { id: string; role: "user" | "assistant"; content: string; actions?: AssistantAction[]; applied?: boolean; autoSpeak?: boolean };
 
 const blankDraft: Draft = { title: "", notes: "", project: "Inbox", priority: "medium", dueDate: "", estimatedMinutes: "" };
 
@@ -103,6 +103,7 @@ export default function Dashboard() {
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [voiceAutoAsk, setVoiceAutoAsk] = useState(false);
+  const [voiceAutoSpeak, setVoiceAutoSpeak] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [authError, setAuthError] = useState("");
   const loadVersion = useRef(0);
@@ -197,7 +198,7 @@ export default function Dashboard() {
     } catch (caught) { setTaskError(caught instanceof Error ? caught.message : "Task could not be deleted."); }
   }
 
-  async function submitAssistantMessage(message: string) {
+  async function submitAssistantMessage(message: string, autoSpeak = false) {
     if (!message || assistantBusy) return;
     setAssistantError("");
     setAssistantBusy(true);
@@ -208,7 +209,7 @@ export default function Dashboard() {
       const result = await api<AssistantResult>("/api/assistant/chat", { method: "POST", json: { message, history: assistantHistory, date: localDateKey(), timezone } });
       setAssistantModel(result.model);
       setAssistantHistory((current) => [...current, { role: "user" as const, content: message }, { role: "assistant" as const, content: result.message }].slice(-8));
-      setChat((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: result.message, actions: result.actions }]);
+      setChat((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: result.message, actions: result.actions, autoSpeak }]);
       setAssistantStatus(`Using ${result.model}`);
     } catch (caught) {
       setAssistantError(caught instanceof Error ? caught.message : "The local assistant is unavailable.");
@@ -220,7 +221,7 @@ export default function Dashboard() {
     const message = assistantInput.trim();
     if (!message) return;
     setAssistantInput("");
-    await submitAssistantMessage(message);
+    await submitAssistantMessage(message, voiceAutoSpeak);
   }
 
   async function confirmActions(entry: ChatEntry) {
@@ -299,8 +300,8 @@ export default function Dashboard() {
 
         <aside className="surface flex min-h-[430px] flex-col p-5 sm:p-7" aria-labelledby="assistant-title">
           <p className="eyebrow">LOCAL ASSISTANT</p><div className="mt-2 flex items-start justify-between gap-3"><div><h2 id="assistant-title" className="text-2xl font-semibold">Think it through.</h2><p className="muted mt-1 text-sm">{assistantStatus}</p></div></div>
-          <div className="my-5 flex-1 space-y-3 overflow-y-auto" aria-live="polite">{chat.length === 0 && <p className="muted rounded-xl bg-[var(--sage)]/45 p-4 text-sm">Ask about your tasks. Ollama stays on your machine and is optional.</p>}{chat.map((entry) => <div key={entry.id} className={entry.role === "user" ? "ml-8 rounded-xl bg-[var(--ink)] p-3 text-sm text-white" : "rounded-xl border border-[var(--line)] bg-white/55 p-3 text-sm"}><p>{entry.content}</p>{entry.role === "assistant" && <SpeakButton enabled={voiceStatus?.ttsConfigured === true} text={entry.content} onError={setAssistantError} />}{entry.actions && entry.actions.length > 0 && <div className="mt-3 border-t border-[var(--line)] pt-3"><p className="font-bold">Suggested changes</p><ul className="mt-2 space-y-1 text-xs">{entry.actions.map((action, index) => <li key={`${entry.id}-${index}`}>{actionLabel(action)}</li>)}</ul>{entry.applied ? <p className="mt-3 text-xs font-bold text-[var(--accent-dark)]">Changes applied.</p> : <button className="primary-button mt-3 w-full text-sm" onClick={() => void confirmActions(entry)}>Confirm changes</button>}</div>}</div>)}</div>
-          <form className="flex flex-col gap-2" onSubmit={askAssistant}><div className="flex gap-2"><input className="field min-w-0" maxLength={4000} placeholder="What should I focus on?" value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} disabled={assistantBusy} /><button className="primary-button" disabled={assistantBusy}>{assistantBusy ? "…" : "Ask"}</button></div><div className="flex min-h-8 flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-3"><VoiceInputButton enabled={voiceStatus?.configured === true} disabled={assistantBusy} onTranscript={(text) => { setAssistantError(""); if (voiceAutoAsk) { setAssistantInput(""); void submitAssistantMessage(text); } else setAssistantInput(text); }} onError={setAssistantError} />{voiceStatus?.configured === true && <label className="muted flex items-center gap-1 text-xs"><input type="checkbox" checked={voiceAutoAsk} onChange={(event) => setVoiceAutoAsk(event.target.checked)} />Ask automatically</label>}</div>{voiceStatus && !voiceStatus.ttsConfigured && <span className="muted text-xs">Spoken replies not configured</span>}</div></form><p className="error mt-2" role="alert">{assistantError}</p><p className="muted mt-3 text-xs">Suggestions require confirmation. Zenith will not apply task changes on its own.</p>
+          <div className="my-5 flex-1 space-y-3 overflow-y-auto" aria-live="polite">{chat.length === 0 && <p className="muted rounded-xl bg-[var(--sage)]/45 p-4 text-sm">Ask about your tasks. Ollama stays on your machine and is optional.</p>}{chat.map((entry) => <div key={entry.id} className={entry.role === "user" ? "ml-8 rounded-xl bg-[var(--ink)] p-3 text-sm text-white" : "rounded-xl border border-[var(--line)] bg-white/55 p-3 text-sm"}><p>{entry.content}</p>{entry.role === "assistant" && <SpeakButton enabled={voiceStatus?.ttsConfigured === true} text={entry.content} autoPlay={entry.autoSpeak === true} onError={setAssistantError} />}{entry.actions && entry.actions.length > 0 && <div className="mt-3 border-t border-[var(--line)] pt-3"><p className="font-bold">Suggested changes</p><ul className="mt-2 space-y-1 text-xs">{entry.actions.map((action, index) => <li key={`${entry.id}-${index}`}>{actionLabel(action)}</li>)}</ul>{entry.applied ? <p className="mt-3 text-xs font-bold text-[var(--accent-dark)]">Changes applied.</p> : <button className="primary-button mt-3 w-full text-sm" onClick={() => void confirmActions(entry)}>Confirm changes</button>}</div>}</div>)}</div>
+          <form className="flex flex-col gap-2" onSubmit={askAssistant}><div className="flex gap-2"><input className="field min-w-0" maxLength={4000} placeholder="What should I focus on?" value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} disabled={assistantBusy} /><button className="primary-button" disabled={assistantBusy}>{assistantBusy ? "…" : "Ask"}</button></div><div className="flex min-h-8 flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-3"><VoiceInputButton enabled={voiceStatus?.configured === true} disabled={assistantBusy} onTranscript={(text) => { setAssistantError(""); if (voiceAutoAsk) { setAssistantInput(""); void submitAssistantMessage(text, voiceAutoSpeak); } else setAssistantInput(text); }} onError={setAssistantError} />{voiceStatus?.configured === true && <label className="muted flex items-center gap-1 text-xs"><input type="checkbox" checked={voiceAutoAsk} onChange={(event) => setVoiceAutoAsk(event.target.checked)} />Ask automatically</label>}{voiceStatus?.ttsConfigured === true && <label className="muted flex items-center gap-1 text-xs"><input type="checkbox" checked={voiceAutoSpeak} onChange={(event) => setVoiceAutoSpeak(event.target.checked)} />Speak replies automatically</label>}</div>{voiceStatus && !voiceStatus.ttsConfigured && <span className="muted text-xs">Spoken replies not configured</span>}</div></form><p className="error mt-2" role="alert">{assistantError}</p><p className="muted mt-3 text-xs">Suggestions require confirmation. Zenith will not apply task changes on its own.</p>
         </aside>
       </section>
 
