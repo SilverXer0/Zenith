@@ -22,7 +22,7 @@ npm --prefix frontend install
 npm --prefix frontend run build:webpack
 ~~~
 
-The setup only installs Zenith dependencies. It does not install or download Ollama, Qwen, Whisper, or TTS.
+The setup only installs Zenith dependencies. It does not install or download Ollama, Qwen, Whisper, or TTS. macOS's built-in `say` and `afconvert` tools can provide local speech output without another package.
 
 ## Start Zenith for Mac and phone access
 
@@ -66,6 +66,15 @@ zsh ./scripts/start-zenith-mac.sh
 Set `OLLAMA_AUTOSTART=false` in `.env` to disable this launcher behavior. To install a missing model, run `ollama pull qwen3:4b` separately once.
 
 For Google Calendar, put the OAuth values in `.env` before launching Zenith. The redirect URI is the printed Tailscale URL plus `/api/calendar/oauth/callback`; leave `GOOGLE_REDIRECT_URI` commented so the launcher can derive it automatically.
+
+To enable Mac speech output, add these lines to `.env`:
+
+~~~text
+ZENITH_TTS_COMMAND=/absolute/path/to/Zenith/backend/.venv/bin/python
+ZENITH_TTS_ARGS=["scripts/macos-say-speak.py","{text}","{output}"]
+~~~
+
+Replace the path with the absolute path to your Zenith folder. Restart the launcher afterward. Zenith will show a `Speak reply` control when the adapter is available. Speech-to-text still requires a separate local Whisper installation and configuration.
 
 The launcher’s Ollama startup is intentionally local-only. The OAuth secret stays outside Git, and Zenith still starts normally when Ollama is unavailable.
 
