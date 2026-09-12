@@ -28,7 +28,7 @@ Open the same Mac-hosted Zenith URL and sign in to the same Zenith account on ea
 
 Zenith catches up when the live stream reconnects, when the page becomes visible again, and when the browser comes back online. A 30-second check while the page is visible provides a fallback if live updates are interrupted or unsupported. The header shows the connection status. Task reads bypass browser caches, and late responses cannot overwrite a newer save. Failed saves keep the draft; a successful save followed by a failed refresh is not reported as an unsuccessful save.
 
-This updates the task list, counters, daily focus, and completion summary without reloading the page or clearing an unsaved capture draft. It is not offline editing or closed-app push: browsers may suspend background pages, and the Mac host must remain running and reachable. Calendar, memory, morning briefing, and weekly-plan panels still have their existing separate refresh behavior.
+This updates the task list, counters, daily focus, and completion summary without reloading the page or clearing an unsaved capture draft. The task panel also supports text search across titles, notes, and projects plus a project filter. It is not offline editing or closed-app push: browsers may suspend background pages, and the Mac host must remain running and reachable. Calendar, memory, morning briefing, and weekly-plan panels still have their existing separate refresh behavior.
 
 After updating the Mac checkout, restart Zenith and reload each device once to load the new client code. Verify on the real devices:
 

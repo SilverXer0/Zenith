@@ -87,6 +87,8 @@ export default function Dashboard() {
   const [setupRequired, setSetupRequired] = useState<boolean | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [taskSearch, setTaskSearch] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
   const [draft, setDraft] = useState<Draft>(blankDraft);
   const [editing, setEditing] = useState<Task | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(blankDraft);
@@ -235,7 +237,13 @@ export default function Dashboard() {
     setAssistantHistory([]);
   }
 
-  const visibleTasks = useMemo(() => tasks.filter((task) => showCompleted || !task.completed), [tasks, showCompleted]);
+  const projects = useMemo(() => [...new Set(tasks.map((task) => task.project.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [tasks]);
+  const visibleTasks = useMemo(() => {
+    const query = taskSearch.trim().toLocaleLowerCase();
+    return tasks.filter((task) => (showCompleted || !task.completed)
+      && (!projectFilter || task.project === projectFilter)
+      && (!query || [task.title, task.notes, task.project].some((value) => value.toLocaleLowerCase().includes(query))));
+  }, [tasks, showCompleted, taskSearch, projectFilter]);
   const openCount = tasks.filter((task) => !task.completed).length;
   const completedCount = tasks.length - openCount;
   const localToday = localDateKey();
@@ -267,9 +275,14 @@ export default function Dashboard() {
         <section className="surface p-5 sm:p-7" aria-labelledby="tasks-title">
           <div className="mb-5 flex items-center justify-between gap-3"><h2 id="tasks-title" className="text-2xl font-semibold">Tasks</h2><button className="quiet-button" onClick={() => setShowCompleted((value) => !value)}>{showCompleted ? "Hide completed" : "Show completed"}</button></div>
           <form className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto]" onSubmit={createTask}><input className="field" required maxLength={160} placeholder="Capture something…" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /><button className="primary-button" type="submit">Capture to Inbox</button></form>
+          <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <input className="field" aria-label="Search tasks" placeholder="Search tasks…" value={taskSearch} onChange={(event) => setTaskSearch(event.target.value)} />
+            <select className="field" aria-label="Filter by project" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="">All projects</option>{projects.map((project) => <option key={project} value={project}>{project}</option>)}</select>
+            {(taskSearch || projectFilter) && <button className="quiet-button" type="button" onClick={() => { setTaskSearch(""); setProjectFilter(""); }}>Clear filters</button>}
+          </div>
           <details className="mb-5 rounded-xl border border-[var(--line)] bg-white/35 p-3"><summary className="cursor-pointer text-sm font-bold">Add project, priority, date, estimate, or notes</summary><div className="mt-3 grid gap-2 sm:grid-cols-2"><input className="field" placeholder="Project" value={draft.project} onChange={(event) => setDraft({ ...draft, project: event.target.value })} /><select className="field" value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as Priority })}><option value="medium">Medium priority</option><option value="high">High priority</option><option value="low">Low priority</option></select><input className="field" type="date" value={draft.dueDate} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} /><input className="field" type="number" min="5" max="480" step="5" placeholder="Estimate (minutes)" value={draft.estimatedMinutes} onChange={(event) => setDraft({ ...draft, estimatedMinutes: event.target.value })} /><input className="field" placeholder="Note (optional)" value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></div></details>
           <p className="error" role="alert">{taskError}</p>
-          {visibleTasks.length === 0 ? <p className="muted rounded-xl bg-[var(--sage)]/45 p-5 text-sm">{showCompleted ? "Your list is clear. Add the one thing that matters next." : tasks.length ? "No open tasks. Enjoy the clear space." : "Your list is clear. Add the one thing that matters next."}</p> : <ul className="divide-y divide-[var(--line)]">{visibleTasks.map((task) => <li className="flex items-start gap-3 py-4 first:pt-1" key={task.id}><input className="mt-1.5 size-5 accent-[var(--accent)]" type="checkbox" checked={task.completed} aria-label={`Complete ${task.title}`} onChange={() => void toggleTask(task)} /><div className="min-w-0 flex-1"><p className={`font-semibold ${task.completed ? "text-[var(--muted)] line-through" : ""}`}>{task.title}</p><p className="muted mt-1 text-xs">{task.project} · {dueLabel(task)} · {task.priority} priority{task.estimatedMinutes ? ` · ${task.estimatedMinutes} min` : ""}{task.notes ? ` · ${task.notes}` : ""}</p></div><button className="quiet-button" onClick={() => beginEdit(task)}>Edit</button><button className="danger-button" onClick={() => void deleteTask(task)} aria-label={`Delete ${task.title}`}>Delete</button></li>)}</ul>}
+          {visibleTasks.length === 0 ? <p className="muted rounded-xl bg-[var(--sage)]/45 p-5 text-sm">{taskSearch || projectFilter ? "No tasks match these filters." : showCompleted ? "Your list is clear. Add the one thing that matters next." : tasks.length ? "No open tasks. Enjoy the clear space." : "Your list is clear. Add the one thing that matters next."}</p> : <ul className="divide-y divide-[var(--line)]">{visibleTasks.map((task) => <li className="flex items-start gap-3 py-4 first:pt-1" key={task.id}><input className="mt-1.5 size-5 accent-[var(--accent)]" type="checkbox" checked={task.completed} aria-label={`Complete ${task.title}`} onChange={() => void toggleTask(task)} /><div className="min-w-0 flex-1"><p className={`font-semibold ${task.completed ? "text-[var(--muted)] line-through" : ""}`}>{task.title}</p><p className="muted mt-1 text-xs">{task.project} · {dueLabel(task)} · {task.priority} priority{task.estimatedMinutes ? ` · ${task.estimatedMinutes} min` : ""}{task.notes ? ` · ${task.notes}` : ""}</p></div><button className="quiet-button" onClick={() => beginEdit(task)}>Edit</button><button className="danger-button" onClick={() => void deleteTask(task)} aria-label={`Delete ${task.title}`}>Delete</button></li>)}</ul>}
         </section>
 
         <aside className="surface flex min-h-[430px] flex-col p-5 sm:p-7" aria-labelledby="assistant-title">

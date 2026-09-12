@@ -23,7 +23,7 @@ The Next app proxies `/api/*` to `http://127.0.0.1:8000` by default. Set `ZENITH
 
 ## Current slice
 
-The shell includes local setup/sign-in, authenticated task capture and editing, completion/deletion, assistant chat with confirmation, Ollama availability/release controls, authenticated live task updates, optional read-only Calendar connection controls, task planning, weekly planning, daily completion history, persistent context notes, optional microphone transcription, spoken assistant replies, PWA installation metadata, a service worker, an install prompt, and browser-local due-task reminders.
+The shell includes local setup/sign-in, authenticated task capture and editing, completion/deletion, task search and project filtering, assistant chat with confirmation, Ollama availability/release controls, authenticated live task updates, optional read-only Calendar connection controls, task planning, weekly planning, daily completion history, persistent context notes, optional microphone transcription, spoken assistant replies, PWA installation metadata, a service worker, an install prompt, and browser-local due-task reminders.
 
 Voice is deliberately optional. When the Python API reports no configured local adapters, the UI keeps text chat available and explains that voice is not configured. When adapters are configured, microphone recordings are sent only to the local Zenith server and assistant replies can be spoken on demand.
 
