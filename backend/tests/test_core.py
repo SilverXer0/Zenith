@@ -127,6 +127,19 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f'/api/tasks/{task["id"]}').status_code, 404)
         self.assertEqual(self.client.get("/api/tasks").json()["tasks"], [])
 
+    def test_task_estimate_is_optional_persistent_and_clearable(self):
+        self.setup_account()
+        for estimate in (4, 481, True, "30"):
+            with self.subTest(estimate=estimate):
+                self.assertEqual(self.client.post("/api/tasks", json={"title": "Invalid estimate", "estimatedMinutes": estimate}).status_code, 400)
+        created = self.client.post("/api/tasks", json={"title": "Sized task", "estimatedMinutes": 45}).json()["task"]
+        self.assertEqual(created["estimatedMinutes"], 45)
+        with TestClient(create_app(self.directory)) as restarted:
+            restarted.cookies.set(COOKIE_NAME, self.client.cookies[COOKIE_NAME])
+            self.assertEqual(restarted.get("/api/tasks").json()["tasks"][0]["estimatedMinutes"], 45)
+        cleared = self.client.patch(f'/api/tasks/{created["id"]}', json={"estimatedMinutes": None}).json()["task"]
+        self.assertNotIn("estimatedMinutes", cleared)
+
     def test_user_isolation_including_guessed_task_ids(self):
         user = self.setup_account()
         with self.database.connection(write=True) as connection:
@@ -277,6 +290,20 @@ class MigrationTests(unittest.TestCase):
         returned = self.node("read", cookie)
         self.assertEqual(returned["tasks"], imported)
         self.assertEqual(returned["summary"]["counts"]["completed"], 0)
+
+    def test_legacy_json_import_preserves_valid_task_estimate(self):
+        path = self.directory / "tasks.json"
+        path.write_text(json.dumps([
+            {"id": "estimated", "title": "Imported with estimate", "estimatedMinutes": 30},
+            {"id": "invalid", "title": "Imported without invalid estimate", "estimatedMinutes": 999},
+        ]), encoding="utf-8")
+        database = Database(self.directory)
+        database.initialize()
+        with database.connection() as connection:
+            user_id = connection.execute("SELECT id FROM users LIMIT 1").fetchone()["id"]
+        tasks = database.list_tasks(user_id)
+        self.assertEqual(tasks[0]["estimatedMinutes"], 30)
+        self.assertNotIn("estimatedMinutes", tasks[1])
 
     def test_malformed_legacy_file_is_not_marked_migrated(self):
         path = self.directory / "tasks.json"

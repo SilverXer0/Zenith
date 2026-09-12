@@ -321,6 +321,26 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual([event["title"] for event in availability["conflicts"][0]["events"]],
                          ["Planning", "Overlapping call"])
 
+    def test_availability_recommends_urgent_tasks_that_fit_open_windows(self):
+        self.configure()
+        self.mock.events = [
+            {"id": "midday", "summary": "Lunch", "start": {"dateTime": "2026-09-04T10:00:00-07:00"},
+             "end": {"dateTime": "2026-09-04T11:00:00-07:00"}},
+            {"id": "afternoon", "summary": "Appointment", "start": {"dateTime": "2026-09-04T14:00:00-07:00"},
+             "end": {"dateTime": "2026-09-04T15:00:00-07:00"}},
+        ]
+        self.connect()
+        self.client.post("/api/tasks", json={"title": "Due today", "dueDate": "2026-09-04", "estimatedMinutes": 120})
+        self.client.post("/api/tasks", json={"title": "Overdue", "dueDate": "2026-09-03", "estimatedMinutes": 30})
+        self.client.post("/api/tasks", json={"title": "No estimate"})
+        response = self.client.get("/api/planning/availability",
+                                   params={"date": "2026-09-04", "timezone": "America/Los_Angeles"})
+        self.assertEqual(response.status_code, 200)
+        recommendations = response.json()["recommendations"]
+        self.assertEqual([item["task"]["title"] for item in recommendations], ["Overdue", "Due today", "No estimate"])
+        self.assertEqual([item["estimatedMinutes"] for item in recommendations], [30, 120, 60])
+        self.assertEqual([item["usesDefaultEstimate"] for item in recommendations], [False, False, True])
+
     def test_expired_and_incomplete_states_are_consumed_without_remote_calls(self):
         self.configure()
         response = self.client.get("/api/calendar/connect", follow_redirects=False)

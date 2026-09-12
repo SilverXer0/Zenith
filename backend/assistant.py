@@ -35,6 +35,7 @@ RESPONSE_SCHEMA = {
                     "project": {"type": ["string", "null"]},
                     "priority": {"enum": ["low", "medium", "high", None]},
                     "dueDate": {"type": ["string", "null"]},
+                    "estimatedMinutes": {"type": ["integer", "null"]},
                     "completed": {"type": ["boolean", "null"]},
                 },
                 "required": ["type"],
@@ -45,8 +46,8 @@ RESPONSE_SCHEMA = {
     "required": ["reply", "actions"],
     "additionalProperties": False,
 }
-ACTION_KEYS = {"type", "taskId", "title", "notes", "project", "priority", "dueDate", "completed"}
-UPDATE_KEYS = ("title", "notes", "project", "priority", "dueDate", "completed")
+ACTION_KEYS = {"type", "taskId", "title", "notes", "project", "priority", "dueDate", "estimatedMinutes", "completed"}
+UPDATE_KEYS = ("title", "notes", "project", "priority", "dueDate", "estimatedMinutes", "completed")
 
 
 class OllamaError(Exception):
@@ -177,9 +178,16 @@ def normalize_actions(value, tasks: list[dict]) -> list[dict]:
             notes = action.get("notes") if isinstance(action.get("notes"), str) else ""
             project = action.get("project") if isinstance(action.get("project"), str) else "Inbox"
             priority = action.get("priority") if action.get("priority") in ("low", "medium", "high") else "medium"
+            estimate = action.get("estimatedMinutes")
+            if estimate is not None:
+                try:
+                    TaskPatch.model_validate({"estimatedMinutes": estimate})
+                except ValidationError:
+                    continue
             normalized.append({"type": kind, "title": title.strip()[:160], "notes": notes.strip()[:2000],
                                "project": project.strip()[:80] or "Inbox", "priority": priority,
-                               "dueDate": due_date})
+                               "dueDate": due_date, **({"estimatedMinutes": estimate}
+                               if "estimatedMinutes" in action else {})})
             continue
         task_id = action.get("taskId")
         if kind not in ("update_task", "complete_task", "delete_task") or not isinstance(task_id, str) or task_id not in task_ids:
@@ -192,7 +200,7 @@ def normalize_actions(value, tasks: list[dict]) -> list[dict]:
             if key not in action:
                 continue
             value = action[key]
-            if value is None and key not in ("dueDate",):
+            if value is None and key not in ("dueDate", "estimatedMinutes"):
                 continue
             fields[key] = value
         try:
@@ -255,6 +263,7 @@ class LocalAssistant:
             "id": task["id"], "status": "done" if task["completed"] else "open",
             "title": task["title"], "notes": task["notes"][:500], "project": task["project"],
             "priority": task["priority"], "dueDate": task["dueDate"],
+            "estimatedMinutes": task.get("estimatedMinutes"),
         }, 28000, "No tasks are currently saved.")
         memory_context = _bounded_lines(memories, lambda memory: {
             "category": memory["category"], "content": memory["content"],

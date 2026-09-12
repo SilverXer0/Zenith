@@ -2,7 +2,7 @@ import re
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 
 
 class Credentials(BaseModel):
@@ -25,6 +25,7 @@ class TaskPatch(BaseModel):
     project: str | None = Field(default=None, max_length=80)
     priority: Literal["low", "medium", "high"] | None = None
     dueDate: str | None = None
+    estimatedMinutes: StrictInt | None = Field(default=None, ge=5, le=480)
     completed: StrictBool = False
 
     @field_validator("title", "notes", "project")

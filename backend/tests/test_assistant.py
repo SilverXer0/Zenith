@@ -240,6 +240,7 @@ class AssistantTests(unittest.TestCase):
                                   ([{"type": "create_task", "title": str(index)} for index in range(6)], 400),
                                   ([{"type": "unknown"}], 409),
                                   ([{"type": "create_task", "title": "Bad date", "dueDate": "2026-02-31"}], 409),
+                                  ([{"type": "create_task", "title": "Bad estimate", "estimatedMinutes": 481}], 409),
                                   ([{"type": "delete_task", "taskId": "foreign"}], 409),
                                   ([{"type": "update_task", "taskId": first["id"]},], 409),
                                   ([{"type": "complete_task", "taskId": first["id"]},

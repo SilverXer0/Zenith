@@ -7,10 +7,10 @@ import { InstallButton } from "./pwa";
 import { ReminderControls } from "./notifications";
 import { SpeakButton, VoiceInputButton } from "./voice";
 
-type Draft = { title: string; notes: string; project: string; priority: Priority; dueDate: string };
+type Draft = { title: string; notes: string; project: string; priority: Priority; dueDate: string; estimatedMinutes: string };
 type ChatEntry = { id: string; role: "user" | "assistant"; content: string; actions?: AssistantAction[]; applied?: boolean };
 
-const blankDraft: Draft = { title: "", notes: "", project: "Inbox", priority: "medium", dueDate: "" };
+const blankDraft: Draft = { title: "", notes: "", project: "Inbox", priority: "medium", dueDate: "", estimatedMinutes: "" };
 
 function sortTasks(tasks: Task[]) {
   return [...tasks].sort((a, b) => Number(a.completed) - Number(b.completed)
@@ -150,7 +150,7 @@ export default function Dashboard() {
     event.preventDefault();
     setTaskError("");
     try {
-      const result = await api<{ task: Task }>("/api/tasks", { method: "POST", json: { ...draft, dueDate: draft.dueDate || null } });
+      const result = await api<{ task: Task }>("/api/tasks", { method: "POST", json: { ...draft, dueDate: draft.dueDate || null, estimatedMinutes: draft.estimatedMinutes ? Number(draft.estimatedMinutes) : null } });
       setTasks((current) => sortTasks([...current, result.task]));
       setDraft(blankDraft);
     } catch (caught) {
@@ -167,14 +167,14 @@ export default function Dashboard() {
 
   function beginEdit(task: Task) {
     setEditing(task);
-    setEditDraft({ title: task.title, notes: task.notes, project: task.project, priority: task.priority, dueDate: task.dueDate ?? "" });
+    setEditDraft({ title: task.title, notes: task.notes, project: task.project, priority: task.priority, dueDate: task.dueDate ?? "", estimatedMinutes: task.estimatedMinutes ? String(task.estimatedMinutes) : "" });
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editing) return;
     try {
-      const result = await api<{ task: Task }>(`/api/tasks/${editing.id}`, { method: "PATCH", json: { ...editDraft, dueDate: editDraft.dueDate || null } });
+      const result = await api<{ task: Task }>(`/api/tasks/${editing.id}`, { method: "PATCH", json: { ...editDraft, dueDate: editDraft.dueDate || null, estimatedMinutes: editDraft.estimatedMinutes ? Number(editDraft.estimatedMinutes) : null } });
       setTasks((current) => sortTasks(current.map((candidate) => candidate.id === editing.id ? result.task : candidate)));
       setEditing(null);
     } catch (caught) { setTaskError(caught instanceof Error ? caught.message : "Task could not be updated."); }
@@ -266,9 +266,9 @@ export default function Dashboard() {
         <section className="surface p-5 sm:p-7" aria-labelledby="tasks-title">
           <div className="mb-5 flex items-center justify-between gap-3"><h2 id="tasks-title" className="text-2xl font-semibold">Tasks</h2><button className="quiet-button" onClick={() => setShowCompleted((value) => !value)}>{showCompleted ? "Hide completed" : "Show completed"}</button></div>
           <form className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto]" onSubmit={createTask}><input className="field" required maxLength={160} placeholder="Capture something…" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /><button className="primary-button" type="submit">Capture to Inbox</button></form>
-          <details className="mb-5 rounded-xl border border-[var(--line)] bg-white/35 p-3"><summary className="cursor-pointer text-sm font-bold">Add project, priority, date, or notes</summary><div className="mt-3 grid gap-2 sm:grid-cols-2"><input className="field" placeholder="Project" value={draft.project} onChange={(event) => setDraft({ ...draft, project: event.target.value })} /><select className="field" value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as Priority })}><option value="medium">Medium priority</option><option value="high">High priority</option><option value="low">Low priority</option></select><input className="field" type="date" value={draft.dueDate} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} /><input className="field" placeholder="Note (optional)" value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></div></details>
+          <details className="mb-5 rounded-xl border border-[var(--line)] bg-white/35 p-3"><summary className="cursor-pointer text-sm font-bold">Add project, priority, date, estimate, or notes</summary><div className="mt-3 grid gap-2 sm:grid-cols-2"><input className="field" placeholder="Project" value={draft.project} onChange={(event) => setDraft({ ...draft, project: event.target.value })} /><select className="field" value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as Priority })}><option value="medium">Medium priority</option><option value="high">High priority</option><option value="low">Low priority</option></select><input className="field" type="date" value={draft.dueDate} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} /><input className="field" type="number" min="5" max="480" step="5" placeholder="Estimate (minutes)" value={draft.estimatedMinutes} onChange={(event) => setDraft({ ...draft, estimatedMinutes: event.target.value })} /><input className="field" placeholder="Note (optional)" value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></div></details>
           <p className="error" role="alert">{taskError}</p>
-          {visibleTasks.length === 0 ? <p className="muted rounded-xl bg-[var(--sage)]/45 p-5 text-sm">{showCompleted ? "Your list is clear. Add the one thing that matters next." : tasks.length ? "No open tasks. Enjoy the clear space." : "Your list is clear. Add the one thing that matters next."}</p> : <ul className="divide-y divide-[var(--line)]">{visibleTasks.map((task) => <li className="flex items-start gap-3 py-4 first:pt-1" key={task.id}><input className="mt-1.5 size-5 accent-[var(--accent)]" type="checkbox" checked={task.completed} aria-label={`Complete ${task.title}`} onChange={() => void toggleTask(task)} /><div className="min-w-0 flex-1"><p className={`font-semibold ${task.completed ? "text-[var(--muted)] line-through" : ""}`}>{task.title}</p><p className="muted mt-1 text-xs">{task.project} · {dueLabel(task)} · {task.priority} priority{task.notes ? ` · ${task.notes}` : ""}</p></div><button className="quiet-button" onClick={() => beginEdit(task)}>Edit</button><button className="danger-button" onClick={() => void deleteTask(task)} aria-label={`Delete ${task.title}`}>Delete</button></li>)}</ul>}
+          {visibleTasks.length === 0 ? <p className="muted rounded-xl bg-[var(--sage)]/45 p-5 text-sm">{showCompleted ? "Your list is clear. Add the one thing that matters next." : tasks.length ? "No open tasks. Enjoy the clear space." : "Your list is clear. Add the one thing that matters next."}</p> : <ul className="divide-y divide-[var(--line)]">{visibleTasks.map((task) => <li className="flex items-start gap-3 py-4 first:pt-1" key={task.id}><input className="mt-1.5 size-5 accent-[var(--accent)]" type="checkbox" checked={task.completed} aria-label={`Complete ${task.title}`} onChange={() => void toggleTask(task)} /><div className="min-w-0 flex-1"><p className={`font-semibold ${task.completed ? "text-[var(--muted)] line-through" : ""}`}>{task.title}</p><p className="muted mt-1 text-xs">{task.project} · {dueLabel(task)} · {task.priority} priority{task.estimatedMinutes ? ` · ${task.estimatedMinutes} min` : ""}{task.notes ? ` · ${task.notes}` : ""}</p></div><button className="quiet-button" onClick={() => beginEdit(task)}>Edit</button><button className="danger-button" onClick={() => void deleteTask(task)} aria-label={`Delete ${task.title}`}>Delete</button></li>)}</ul>}
         </section>
 
         <aside className="surface flex min-h-[430px] flex-col p-5 sm:p-7" aria-labelledby="assistant-title">
@@ -280,7 +280,7 @@ export default function Dashboard() {
 
       <PlanningPanels taskRevision={taskRevision} />
 
-      {editing && <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/25 p-3 sm:items-center"><form className="surface w-full max-w-lg p-6" onSubmit={saveEdit}><div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-semibold">Edit task</h2><button className="quiet-button" type="button" onClick={() => setEditing(null)}>Cancel</button></div><div className="grid gap-3"><input className="field" required maxLength={160} value={editDraft.title} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /><div className="grid gap-3 sm:grid-cols-2"><input className="field" value={editDraft.project} placeholder="Project" onChange={(event) => setEditDraft({ ...editDraft, project: event.target.value })} /><select className="field" value={editDraft.priority} onChange={(event) => setEditDraft({ ...editDraft, priority: event.target.value as Priority })}><option value="medium">Medium priority</option><option value="high">High priority</option><option value="low">Low priority</option></select></div><input className="field" type="date" value={editDraft.dueDate} onChange={(event) => setEditDraft({ ...editDraft, dueDate: event.target.value })} /><textarea className="field min-h-24" maxLength={2000} value={editDraft.notes} placeholder="Notes" onChange={(event) => setEditDraft({ ...editDraft, notes: event.target.value })} /><button className="primary-button" type="submit">Save changes</button></div></form></div>}
+      {editing && <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/25 p-3 sm:items-center"><form className="surface w-full max-w-lg p-6" onSubmit={saveEdit}><div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-semibold">Edit task</h2><button className="quiet-button" type="button" onClick={() => setEditing(null)}>Cancel</button></div><div className="grid gap-3"><input className="field" required maxLength={160} value={editDraft.title} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /><div className="grid gap-3 sm:grid-cols-2"><input className="field" value={editDraft.project} placeholder="Project" onChange={(event) => setEditDraft({ ...editDraft, project: event.target.value })} /><select className="field" value={editDraft.priority} onChange={(event) => setEditDraft({ ...editDraft, priority: event.target.value as Priority })}><option value="medium">Medium priority</option><option value="high">High priority</option><option value="low">Low priority</option></select></div><div className="grid gap-3 sm:grid-cols-2"><input className="field" type="date" value={editDraft.dueDate} onChange={(event) => setEditDraft({ ...editDraft, dueDate: event.target.value })} /><input className="field" type="number" min="5" max="480" step="5" placeholder="Estimate (minutes)" value={editDraft.estimatedMinutes} onChange={(event) => setEditDraft({ ...editDraft, estimatedMinutes: event.target.value })} /></div><textarea className="field min-h-24" maxLength={2000} value={editDraft.notes} placeholder="Notes" onChange={(event) => setEditDraft({ ...editDraft, notes: event.target.value })} /><button className="primary-button" type="submit">Save changes</button></div></form></div>}
     </main>
   );
 }

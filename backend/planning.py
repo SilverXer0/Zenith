@@ -76,8 +76,39 @@ class Planning:
     def availability(self, user_id: str, day: str, timezone_name: str) -> dict:
         if not self.google_calendar:
             return {"date": day, "timezone": timezone_name, "connected": self.database.calendar_connected(user_id),
-                    "available": False, "workday": {}, "freeWindows": [], "conflicts": [], "events": []}
-        return self.google_calendar.availability(user_id, day, timezone_name)
+                    "available": False, "workday": {}, "freeWindows": [], "conflicts": [],
+                    "recommendations": [], "events": []}
+        result = self.google_calendar.availability(user_id, day, timezone_name)
+        result["recommendations"] = self._recommendations(user_id, day, result) if result["available"] else []
+        return result
+
+    def _recommendations(self, user_id: str, day: str, availability: dict) -> list[dict]:
+        priority = {"high": 0, "medium": 1, "low": 2}
+        tasks = [task for task in self.database.list_tasks(user_id) if not task["completed"]]
+
+        def rank(task):
+            due = task["dueDate"]
+            due_rank = 0 if due and due < day else 1 if due == day else 2 if due else 3
+            return due_rank, due or "9999-12-31", priority.get(task["priority"], 1), task["updatedAt"]
+
+        ordered = sorted(tasks, key=rank)
+        recommendations = []
+        used = set()
+        for window in availability["freeWindows"]:
+            candidates = [task for task in ordered if task["id"] not in used
+                          and (task.get("estimatedMinutes") or 60) <= window["durationMinutes"]]
+            if not candidates:
+                continue
+            task = candidates[0]
+            used.add(task["id"])
+            estimate = task.get("estimatedMinutes") or 60
+            recommendations.append({
+                "task": task,
+                "window": window,
+                "estimatedMinutes": estimate,
+                "usesDefaultEstimate": "estimatedMinutes" not in task,
+            })
+        return recommendations[:5]
 
     def morning(self, user_id: str, day: str) -> dict:
         opened = [task for task in self.database.list_tasks(user_id) if not task["completed"]]

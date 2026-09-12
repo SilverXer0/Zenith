@@ -24,7 +24,7 @@ SCHEMA = (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         title TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT 'Inbox',
         priority TEXT NOT NULL DEFAULT 'medium', due_date TEXT, completed INTEGER NOT NULL DEFAULT 0,
-        completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
+        completed_at TEXT, estimated_minutes INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS task_completion_events (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         task_id TEXT NOT NULL, title TEXT NOT NULL, completed_at TEXT NOT NULL)""",
@@ -54,11 +54,14 @@ SCHEMA = (
 
 
 def task_from_row(row: sqlite3.Row) -> dict:
-    return {
+    task = {
         "id": row["id"], "title": row["title"], "notes": row["notes"], "project": row["project"],
         "priority": row["priority"], "dueDate": row["due_date"], "completed": bool(row["completed"]),
         "completedAt": row["completed_at"], "createdAt": row["created_at"], "updatedAt": row["updated_at"],
     }
+    if row["estimated_minutes"] is not None:
+        task["estimatedMinutes"] = row["estimated_minutes"]
+    return task
 
 
 def memory_from_row(row: sqlite3.Row) -> dict:
@@ -100,6 +103,8 @@ class Database:
             task_columns = {row["name"] for row in connection.execute("PRAGMA table_info(tasks)")}
             if "completed_at" not in task_columns:
                 connection.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
+            if "estimated_minutes" not in task_columns:
+                connection.execute("ALTER TABLE tasks ADD COLUMN estimated_minutes INTEGER")
             calendar_columns = {row["name"] for row in connection.execute("PRAGMA table_info(calendar_accounts)")}
             for name in ("access_token", "token_expires_at", "calendar_name", "connected_at"):
                 if name not in calendar_columns:
@@ -142,12 +147,16 @@ class Database:
             if not isinstance(task, dict) or not task.get("id") or not task.get("title"):
                 continue
             created = task.get("createdAt") or timestamp()
+            estimate = task.get("estimatedMinutes")
+            if not isinstance(estimate, int) or isinstance(estimate, bool) or not 5 <= estimate <= 480:
+                estimate = None
             connection.execute("""INSERT OR IGNORE INTO tasks
-                (id, user_id, title, notes, project, priority, due_date, completed, completed_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)""", (
+                (id, user_id, title, notes, project, priority, due_date, completed, completed_at,
+                 estimated_minutes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)""", (
                 str(task["id"]), user_id, str(task["title"]), str(task.get("notes") or ""),
                 str(task.get("project") or "Inbox"), task.get("priority") if task.get("priority") in ("low", "medium", "high") else "medium",
-                task.get("dueDate") or None, int(bool(task.get("completed"))), created, task.get("updatedAt") or created,
+                task.get("dueDate") or None, int(bool(task.get("completed"))), estimate, created, task.get("updatedAt") or created,
             ))
         connection.execute("CREATE TABLE legacy_migration (migrated_at TEXT NOT NULL)")
         connection.execute("INSERT INTO legacy_migration VALUES (?)", (timestamp(),))
@@ -193,16 +202,21 @@ class Database:
         for key in ("dueDate", "completed"):
             if key in patch:
                 task[key] = patch[key]
+        if "estimatedMinutes" in patch:
+            if patch["estimatedMinutes"] is None:
+                task.pop("estimatedMinutes", None)
+            else:
+                task["estimatedMinutes"] = patch["estimatedMinutes"]
         task["updatedAt"] = timestamp()
         completion = task["completed"] and not existing["completed"]
         task["completedAt"] = (task["updatedAt"] if completion else existing["completedAt"]) if task["completed"] else None
-        values = (task["title"], task["notes"], task["project"], task["priority"], task["dueDate"], int(task["completed"]), task["completedAt"], task["updatedAt"], task["id"], user_id)
+        values = (task["title"], task["notes"], task["project"], task["priority"], task["dueDate"], int(task["completed"]), task["completedAt"], task.get("estimatedMinutes"), task["updatedAt"], task["id"], user_id)
         if task_id:
             connection.execute("""UPDATE tasks SET title=?, notes=?, project=?, priority=?, due_date=?,
-                completed=?, completed_at=?, updated_at=? WHERE id=? AND user_id=?""", values)
+                completed=?, completed_at=?, estimated_minutes=?, updated_at=? WHERE id=? AND user_id=?""", values)
         else:
             connection.execute("""INSERT INTO tasks (title, notes, project, priority, due_date, completed,
-                completed_at, updated_at, id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (*values, task["createdAt"]))
+                completed_at, estimated_minutes, updated_at, id, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (*values, task["createdAt"]))
         if completion:
             self._record_completion(connection, user_id, task)
         return task

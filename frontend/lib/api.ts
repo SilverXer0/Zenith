@@ -7,6 +7,7 @@ export type Task = {
   project: string;
   priority: Priority;
   dueDate: string | null;
+  estimatedMinutes?: number | null;
   completed: boolean;
   completedAt: string | null;
   createdAt: string;
@@ -52,6 +53,7 @@ export type CalendarAvailability = {
   workday: { start: string; end: string };
   freeWindows: { start: string; end: string; durationMinutes: number }[];
   conflicts: { start: string; end: string; events: { id: string; title: string; calendarName?: string }[] }[];
+  recommendations: { task: Task; window: { start: string; end: string; durationMinutes: number }; estimatedMinutes: number; usesDefaultEstimate: boolean }[];
   events: CalendarEvent[];
 };
 
