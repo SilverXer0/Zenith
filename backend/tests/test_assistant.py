@@ -309,6 +309,21 @@ class AssistantTests(unittest.TestCase):
                      {"message": "ok", "extra": "no"}):
             self.assertEqual(self.client.post("/api/assistant/chat", json=body).status_code, 400)
 
+    def test_qwen_thinking_blocks_are_not_exposed_or_parsed_as_the_reply(self):
+        self.configure()
+        self.mock.chat_content = '<think>Private internal reasoning</think>{"reply":"Final answer","actions":[]}'
+        response = self.client.post("/api/assistant/chat", json={"message": "Hello"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["message"], "Final answer")
+
+        self.mock.chat_content = "<think>Private internal reasoning</think>Plain final answer"
+        response = self.client.post("/api/assistant/chat", json={"message": "Hello"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["message"], "Plain final answer")
+
+        self.mock.chat_content = "<think>Unfinished internal reasoning"
+        self.assertEqual(self.client.post("/api/assistant/chat", json={"message": "Hello"}).status_code, 503)
+
     def test_unload_discovers_running_model_and_never_loads_an_idle_one(self):
         self.configure(selected=False)
         unloaded = self.client.post("/api/assistant/unload", json={})

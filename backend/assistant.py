@@ -117,6 +117,19 @@ def _model_name(value) -> str | None:
     return value.strip()[:120] if isinstance(value, str) and value.strip() else None
 
 
+def _final_model_content(value: str) -> str:
+    """Remove Qwen thinking blocks before parsing or displaying model output."""
+    start = value.find("<think>")
+    if start >= 0:
+        end = value.find("</think>", start + len("<think>"))
+        if end < 0:
+            return ""
+        value = value[:start] + value[end + len("</think>"):]
+    elif "</think>" in value:
+        value = value.rsplit("</think>", 1)[-1]
+    return value.strip()
+
+
 def _models(payload: dict) -> list[str]:
     rows = payload.get("models")
     if not isinstance(rows, list):
@@ -306,7 +319,9 @@ LOCAL AVAILABILITY AND TASK FITS:
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip():
             raise ApiError(503, "Local assistant is unavailable.")
-        content = content.strip()
+        content = _final_model_content(content)
+        if not content:
+            raise ApiError(503, "Local assistant is unavailable.")
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError:
