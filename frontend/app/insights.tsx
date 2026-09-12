@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   api,
   type Briefing,
+  type CalendarAvailability,
   type CalendarConnection,
   type CalendarEvent,
   type CalendarStatus,
@@ -36,6 +37,11 @@ function eventTime(event: CalendarEvent) {
   return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(event.start));
 }
 
+function localTimeRange(start: string, end: string) {
+  const format = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+  return format.format(new Date(start)) + "–" + format.format(new Date(end));
+}
+
 function TaskLine({ task }: { task: Task }) {
   return <li className="border-t border-[var(--line)] py-2 first:border-t-0"><span className="font-semibold">{task.title}</span>{task.dueDate && <span className="muted ml-2 text-xs">{task.dueDate}</span>}</li>;
 }
@@ -52,6 +58,7 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
   const [summary, setSummary] = useState<DailySummary | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(null);
   const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>([]);
+  const [availability, setAvailability] = useState<CalendarAvailability | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState("");
   const [calendarBusy, setCalendarBusy] = useState(false);
@@ -62,13 +69,15 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
     setLoading(true);
     setRefreshError("");
     try {
-      const [nextBriefing, nextMorning, nextWeek, nextSummary, nextCalendar, nextConnections] = await Promise.all([
+      const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const [nextBriefing, nextMorning, nextWeek, nextSummary, nextCalendar, nextConnections, nextAvailability] = await Promise.all([
         api<Briefing>("/api/briefing?date=" + today),
         api<MorningBriefing>("/api/briefing/morning?date=" + today),
         api<WeeklyPlan>("/api/weekly-plan?start=" + today),
         api<DailySummary>("/api/summaries/daily?date=" + today + "&offset=" + new Date().getTimezoneOffset()),
         api<CalendarStatus>("/api/calendar/status"),
         api<{ connections: CalendarConnection[] }>("/api/calendar/connections"),
+        api<CalendarAvailability>("/api/planning/availability?date=" + today + "&timezone=" + encodeURIComponent(browserTimezone)),
       ]);
       setBriefing(nextBriefing);
       setMorning(nextMorning);
@@ -76,6 +85,7 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
       setSummary(nextSummary);
       setCalendarStatus(nextCalendar);
       setCalendarConnections(nextConnections.connections);
+      setAvailability(nextAvailability);
     } catch (caught) {
       setRefreshError(caught instanceof Error ? caught.message : "Planning could not be loaded.");
     } finally {
@@ -124,7 +134,7 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
 
     <section className="surface p-5 sm:p-7" aria-labelledby="calendar-title">
       <p className="eyebrow">YOUR SCHEDULE</p><h2 id="calendar-title" className="mt-2 text-2xl font-semibold">Calendar</h2>
-      {!calendarStatus ? <p className="muted mt-4 text-sm">Checking Calendar…</p> : !calendarStatus.configured ? <p className="muted mt-4 text-sm">Google Calendar is not configured on this home server yet. Your task planning remains available.</p> : <><p className="muted mt-2 text-sm">{calendarConnections.length ? "Choose which calendars Zenith should include." : "Connect a read-only Google Calendar to see your schedule beside your tasks."}</p>{calendarConnections.length > 0 && <ul className="mt-4 space-y-3">{calendarConnections.map((connection) => <li className="rounded-xl border border-[var(--line)] bg-white/45 p-3" key={connection.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-semibold">{connection.displayName}</p><p className="muted truncate text-xs">{connection.calendarName || "Google Calendar"}{!connection.enabled && " · paused"}</p></div><span className="muted text-xs">{connection.enabled ? "Included" : "Paused"}</span></div><div className="mt-3 flex flex-wrap gap-2"><button className="quiet-button" onClick={() => void updateCalendarConnection(connection, { enabled: !connection.enabled })} disabled={calendarBusy}>{connection.enabled ? "Pause" : "Include"}</button><button className="quiet-button" onClick={() => void renameCalendar(connection)} disabled={calendarBusy}>Rename</button><button className="danger-button" onClick={() => void disconnectCalendar(connection)} disabled={calendarBusy}>Disconnect</button></div></li>)}</ul>}<div className="mt-4 flex flex-wrap gap-2"><a className="primary-button inline-block" href="/api/calendar/connect">{calendarConnections.length ? "Connect another calendar" : "Connect Calendar"}</a>{calendarConnections.length > 0 && <span className="muted self-center text-xs">Events from included calendars appear together below.</span>}</div>{calendarConnections.length > 0 && <div className="mt-5">{morning?.calendar.available ? <CalendarList events={morning.calendar.events} /> : <p className="muted text-sm">Included calendars are temporarily unavailable.</p>}</div>}</>}
+      {!calendarStatus ? <p className="muted mt-4 text-sm">Checking Calendar…</p> : !calendarStatus.configured ? <p className="muted mt-4 text-sm">Google Calendar is not configured on this home server yet. Your task planning remains available.</p> : <><p className="muted mt-2 text-sm">{calendarConnections.length ? "Choose which calendars Zenith should include." : "Connect a read-only Google Calendar to see your schedule beside your tasks."}</p>{calendarConnections.length > 0 && <ul className="mt-4 space-y-3">{calendarConnections.map((connection) => <li className="rounded-xl border border-[var(--line)] bg-white/45 p-3" key={connection.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-semibold">{connection.displayName}</p><p className="muted truncate text-xs">{connection.calendarName || "Google Calendar"}{!connection.enabled && " · paused"}</p></div><span className="muted text-xs">{connection.enabled ? "Included" : "Paused"}</span></div><div className="mt-3 flex flex-wrap gap-2"><button className="quiet-button" onClick={() => void updateCalendarConnection(connection, { enabled: !connection.enabled })} disabled={calendarBusy}>{connection.enabled ? "Pause" : "Include"}</button><button className="quiet-button" onClick={() => void renameCalendar(connection)} disabled={calendarBusy}>Rename</button><button className="danger-button" onClick={() => void disconnectCalendar(connection)} disabled={calendarBusy}>Disconnect</button></div></li>)}</ul>}<div className="mt-4 flex flex-wrap gap-2"><a className="primary-button inline-block" href="/api/calendar/connect">{calendarConnections.length ? "Connect another calendar" : "Connect Calendar"}</a>{calendarConnections.length > 0 && <span className="muted self-center text-xs">Events from included calendars appear together below.</span>}</div>{calendarConnections.length > 0 && <div className="mt-5">{morning?.calendar.available ? <CalendarList events={morning.calendar.events} /> : <p className="muted text-sm">Included calendars are temporarily unavailable.</p>}</div>}{availability?.available && <div className="mt-5 border-t border-[var(--line)] pt-4"><p className="text-sm font-bold">Open time today</p>{availability.conflicts.length > 0 && <p className="mt-2 text-xs text-[var(--accent-dark)]">{availability.conflicts.length} overlapping block{availability.conflicts.length === 1 ? "" : "s"} detected.</p>}{availability.freeWindows.length ? <ul className="mt-2 space-y-1">{availability.freeWindows.slice(0, 4).map((window) => <li className="muted text-xs" key={window.start}>Open {localTimeRange(window.start, window.end)} · {window.durationMinutes} min</li>)}</ul> : <p className="muted mt-2 text-xs">No open workday windows remain.</p>}</div>}</>}
     </section>
 
     <section className="surface p-5 sm:p-7" aria-labelledby="week-title">

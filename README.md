@@ -117,7 +117,7 @@ The `Help Zenith remember` panel stores short, user-entered preferences, routine
 
 ### Daily briefing
 
-The `Today’s focus` panel is generated locally from open tasks. It surfaces overdue and due-today counts and ranks up to five tasks by due date and priority. It does not require Ollama, so the basic planning view remains available while the local model is unloaded or offline.
+The `Today’s focus` panel is generated locally from open tasks. It surfaces overdue and due-today counts and ranks up to five tasks by due date and priority. The Calendar panel also shows local open workday windows and overlapping-event conflicts across enabled connections. It does not require Ollama, so the basic planning view remains available while the local model is unloaded or offline.
 
 The `Morning briefing` panel summarizes urgent work, today’s due tasks, the next few days of scheduled tasks, and today’s Calendar events when connected. It is generated on demand from local data and does not require Ollama; scheduled delivery and model-written narrative can be added later.
 

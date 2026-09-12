@@ -249,6 +249,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     def weekly_plan(start: str | None = None, current_user: dict = Depends(user)):
         return planning.weekly(current_user["id"], weekly_start(start))
 
+    @app.get("/api/planning/availability")
+    def planning_availability(date: str | None = None, timezone: str = "UTC",
+                              current_user: dict = Depends(user)):
+        return planning.availability(current_user["id"], planning_date(date), timezone)
+
     @app.get("/api/summaries/daily")
     def daily_summary(day: str | None = Query(default=None, alias="date"),
                       offset: int = Query(default=0, ge=-840, le=840), current_user: dict = Depends(user)):

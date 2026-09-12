@@ -73,6 +73,12 @@ class Planning:
             return {"connected": self.database.calendar_connected(user_id), "available": False, "events": []}
         return self.google_calendar.projection(user_id, start, end)
 
+    def availability(self, user_id: str, day: str, timezone_name: str) -> dict:
+        if not self.google_calendar:
+            return {"date": day, "timezone": timezone_name, "connected": self.database.calendar_connected(user_id),
+                    "available": False, "workday": {}, "freeWindows": [], "conflicts": [], "events": []}
+        return self.google_calendar.availability(user_id, day, timezone_name)
+
     def morning(self, user_id: str, day: str) -> dict:
         opened = [task for task in self.database.list_tasks(user_id) if not task["completed"]]
         overdue = [task for task in opened if task["dueDate"] and task["dueDate"] < day]

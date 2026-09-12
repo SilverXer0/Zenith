@@ -10,6 +10,7 @@ from http.client import HTTPException as HttpClientError
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .database import Database, timestamp
 from .errors import ApiError
@@ -206,6 +207,88 @@ class GoogleCalendar:
             source = clean(connection.get("displayName") or connection.get("calendarName") or "Google Calendar", 80)
             lines.append(f"- [{source}] {title} | {start}{end}{location}")
         return "\n".join(lines)
+
+    def availability(self, user_id: str, day: str, timezone_name: str) -> dict:
+        try:
+            parsed_day = date.fromisoformat(day)
+            if parsed_day.isoformat() != day:
+                raise ValueError
+            local_zone = ZoneInfo(timezone_name or "UTC")
+        except (ValueError, TypeError, ZoneInfoNotFoundError):
+            raise ApiError(400, "Calendar date and timezone must be valid.") from None
+
+        workday_start = datetime.combine(parsed_day, time(8), local_zone)
+        workday_end = datetime.combine(parsed_day, time(20), local_zone)
+        result = {"date": day, "timezone": timezone_name or "UTC", "connected": False,
+                  "available": False,
+                  "workday": {"start": workday_start.isoformat(timespec="minutes"),
+                              "end": workday_end.isoformat(timespec="minutes")},
+                  "freeWindows": [], "conflicts": [], "events": []}
+        connections = self.database.list_calendar_connections(user_id)
+        result["connected"] = bool(connections)
+        if not connections or not self.configured():
+            return result
+
+        events = self.events(user_id, instant(workday_start.astimezone(timezone.utc)),
+                             instant(workday_end.astimezone(timezone.utc)))
+        result["available"] = True
+        result["events"] = events
+        intervals = []
+        for event in events:
+            try:
+                start = self._event_local_time(event.get("start"), local_zone, event.get("allDay"), False)
+                end = self._event_local_time(event.get("end"), local_zone, event.get("allDay"), True)
+            except (TypeError, ValueError):
+                continue
+            if end <= workday_start or start >= workday_end or end <= start:
+                continue
+            intervals.append((max(start, workday_start), min(end, workday_end), event))
+
+        intervals.sort(key=lambda item: (item[0], item[1], item[2].get("id") or ""))
+        merged = []
+        for start, end, event in intervals:
+            if merged and start < merged[-1]["end"]:
+                merged[-1]["end"] = max(merged[-1]["end"], end)
+                merged[-1]["events"].append(event)
+            else:
+                merged.append({"start": start, "end": end, "events": [event]})
+
+        cursor = workday_start
+        for busy in merged:
+            if busy["start"] > cursor:
+                result["freeWindows"].append(self._free_window(cursor, busy["start"]))
+            cursor = max(cursor, busy["end"])
+        if cursor < workday_end:
+            result["freeWindows"].append(self._free_window(cursor, workday_end))
+
+        for busy in merged:
+            if len(busy["events"]) < 2:
+                continue
+            result["conflicts"].append({
+                "start": busy["start"].isoformat(timespec="minutes"),
+                "end": busy["end"].isoformat(timespec="minutes"),
+                "events": [{"id": event.get("id"), "title": event.get("title"),
+                            "calendarName": event.get("calendarName")} for event in busy["events"]],
+            })
+        return result
+
+    @staticmethod
+    def _event_local_time(value, local_zone: ZoneInfo, all_day: bool, end: bool) -> datetime:
+        if not isinstance(value, str) or not value:
+            raise ValueError
+        if all_day:
+            parsed = date.fromisoformat(value)
+            return datetime.combine(parsed, time(), local_zone)
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError
+        return parsed.astimezone(local_zone)
+
+    @staticmethod
+    def _free_window(start: datetime, end: datetime) -> dict:
+        return {"start": start.isoformat(timespec="minutes"),
+                "end": end.isoformat(timespec="minutes"),
+                "durationMinutes": int((end - start).total_seconds() // 60)}
 
     def disconnect(self, user_id: str, connection_id: str | None = None):
         self.database.delete_calendar_connection(user_id, connection_id)

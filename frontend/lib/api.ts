@@ -44,6 +44,17 @@ export type CalendarConnection = {
   connectedAt: string;
 };
 
+export type CalendarAvailability = {
+  date: string;
+  timezone: string;
+  connected: boolean;
+  available: boolean;
+  workday: { start: string; end: string };
+  freeWindows: { start: string; end: string; durationMinutes: number }[];
+  conflicts: { start: string; end: string; events: { id: string; title: string; calendarName?: string }[] }[];
+  events: CalendarEvent[];
+};
+
 export type CalendarStatus = {
   configured: boolean;
   connected: boolean;

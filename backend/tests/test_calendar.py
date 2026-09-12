@@ -290,6 +290,37 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(remaining[0]["displayName"], "Work")
         self.assertEqual(self.client.get("/api/calendar/events").status_code, 409)
 
+    def test_availability_uses_local_timezone_and_detects_conflicts(self):
+        self.configure()
+        self.mock.events = [
+            {"id": "morning-a", "summary": "Planning", "start": {"dateTime": "2026-09-04T09:00:00-07:00"},
+             "end": {"dateTime": "2026-09-04T10:00:00-07:00"}},
+            {"id": "morning-b", "summary": "Overlapping call", "start": {"dateTime": "2026-09-04T09:30:00-07:00"},
+             "end": {"dateTime": "2026-09-04T11:00:00-07:00"}},
+            {"id": "afternoon", "summary": "Appointment", "start": {"dateTime": "2026-09-04T13:00:00-07:00"},
+             "end": {"dateTime": "2026-09-04T14:30:00-07:00"}},
+        ]
+        self.connect()
+        response = self.client.get("/api/planning/availability",
+                                   params={"date": "2026-09-04", "timezone": "America/Los_Angeles"})
+        self.assertEqual(response.status_code, 200)
+        availability = response.json()
+        self.assertEqual(availability["timezone"], "America/Los_Angeles")
+        self.assertTrue(availability["available"])
+        self.assertEqual(availability["workday"], {
+            "start": "2026-09-04T08:00-07:00", "end": "2026-09-04T20:00-07:00"})
+        self.assertEqual([(window["start"], window["end"], window["durationMinutes"])
+                          for window in availability["freeWindows"]], [
+                              ("2026-09-04T08:00-07:00", "2026-09-04T09:00-07:00", 60),
+                              ("2026-09-04T11:00-07:00", "2026-09-04T13:00-07:00", 120),
+                              ("2026-09-04T14:30-07:00", "2026-09-04T20:00-07:00", 330),
+                          ])
+        self.assertEqual(len(availability["conflicts"]), 1)
+        self.assertEqual(availability["conflicts"][0]["start"], "2026-09-04T09:00-07:00")
+        self.assertEqual(availability["conflicts"][0]["end"], "2026-09-04T11:00-07:00")
+        self.assertEqual([event["title"] for event in availability["conflicts"][0]["events"]],
+                         ["Planning", "Overlapping call"])
+
     def test_expired_and_incomplete_states_are_consumed_without_remote_calls(self):
         self.configure()
         response = self.client.get("/api/calendar/connect", follow_redirects=False)
