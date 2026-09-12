@@ -53,7 +53,9 @@ Then open http://localhost:3000.
 
 ## Optional services
 
-Start Ollama separately when testing the assistant. The Mac launcher defaults to `qwen3:4b`. If more than one model is installed, set the exact model tag before launching Zenith:
+The Mac launcher now reuses Ollama if it is running, or starts its local service automatically when the `ollama` command is installed. It defaults to `qwen3:4b` and checks that model is installed without downloading anything. The model loads into memory on the first assistant request. If Ollama or the model is unavailable, Zenith Core still starts normally. When you stop Zenith, the launcher stops only the Ollama process it started itself; an already-running Ollama app/service is left alone.
+
+If more than one model is installed, set the exact model tag before launching Zenith:
 
 ~~~zsh
 export OLLAMA_URL="http://127.0.0.1:11434"
@@ -61,9 +63,11 @@ export OLLAMA_MODEL="another-installed-model"
 zsh ./scripts/start-zenith-mac.sh
 ~~~
 
+Set `OLLAMA_AUTOSTART=false` in `.env` to disable this launcher behavior. To install a missing model, run `ollama pull qwen3:4b` separately once.
+
 For Google Calendar, put the OAuth values in `.env` before launching Zenith. The redirect URI is the printed Tailscale URL plus `/api/calendar/oauth/callback`; leave `GOOGLE_REDIRECT_URI` commented so the launcher can derive it automatically.
 
-One-command Ollama startup remains planned. For now, the launcher reads `OLLAMA_MODEL="qwen3:4b"` from `.env`, but Ollama itself must already be running. The OAuth secret stays outside Git, and Zenith still starts normally when Ollama is unavailable.
+The launcher’s Ollama startup is intentionally local-only. The OAuth secret stays outside Git, and Zenith still starts normally when Ollama is unavailable.
 
 The API logs are written to `data/zenith-python-api.log` and `data/zenith-python-api.error.log`.
 

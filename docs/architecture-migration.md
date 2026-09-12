@@ -18,12 +18,12 @@ Zenith is a personal manager, not an autonomous executor. Its target remains a P
 | Core independent of AI | Existing Node and Python Core operations work without Ollama; assistant failures are isolated | Preserve this through Mac/phone verification and the final Windows deployment |
 | No hosted model billing | No paid hosted model calls in the prototype or Python foundation | Keep local-model boundary throughout implementation |
 
-## Mac operational setup still needed
+## Mac operational setup
 
 These are part of the Mac/phone verification work, not Windows work:
 
-- **Persistent local configuration:** let the Mac launcher load Google OAuth credentials and other private settings from a local, git-ignored configuration file so they survive terminal restarts without putting secrets in the repository.
-- **One-command optional Ollama startup:** have the launcher detect or start the local Ollama service and verify the configured `qwen3:4b` model, while allowing Zenith Core and the UI to continue when Ollama is stopped or unavailable.
+- **Persistent local configuration (implemented):** the Mac launcher loads Google OAuth credentials and other private settings from a local, git-ignored `.env` file so they survive terminal restarts without putting secrets in the repository.
+- **One-command optional Ollama startup (implemented):** the launcher reuses or starts the local Ollama service and verifies the configured model without downloading it, while allowing Zenith Core and the UI to continue when Ollama is stopped or unavailable.
 
 ## Sequence: independently testable commits
 
@@ -31,7 +31,7 @@ These are part of the Mac/phone verification work, not Windows work:
 2. **Python live task events (implemented in development):** matching `ready`/`tasks_changed` contract, per-user notices, fresh-snapshot reconnects, session expiry/logout checks, bounded subscriber state and disconnect cleanup. Real HTTP stream and broker/ASGI tests pass; full frontend and Tailscale verification remain cutover gates.
 3. **Existing core API parity (implemented in development):** memory, briefing/planning/summary, optional read-only Calendar, local Ollama, and optional local voice routes are implemented. Calendar uses the shared schema, refreshes access, and contributes events without making task planning depend on Google. The assistant is loopback-only, receives owner-scoped context, produces bounded proposals, requires a separate confirmation request, applies confirmed groups atomically, and can unload a running model. Voice launches trusted local adapters with bounded recordings, outputs, timeouts, and temporary files. Automated model/voice checks use simulators, so real Qwen/VRAM/Whisper/device evidence remains a cutover gate. Do not substitute fake “available” statuses for unavailable integrations.
 4. **Target frontend (in progress):** the isolated Next.js/TypeScript/Tailwind shell now preserves setup/sign-in, quick capture, manual editing, live sync, mobile layout, input drafts, error recovery, assistant confirmation, optional-model controls, Calendar status/connection, task planning, daily history, weekly planning, persistent context notes, optional voice controls, PWA metadata/service-worker installation, and browser-local reminders against the Python API. Keep the API same-origin behind the private entry point; actual phone installation and closed-app delivery remain verification/deployment gates.
-5. **Mac launcher reliability (next):** persist private local configuration for Google Calendar and other optional services, and optionally start/verify Ollama plus the configured `qwen3:4b` model from the same launcher command. Preserve the ability to run Core without Ollama.
+5. **Mac launcher reliability (implemented):** private local configuration loads from `.env`, and the launcher optionally starts/verifies Ollama plus the configured `qwen3:4b` model from the same command. Core remains independent of Ollama, and missing models are never downloaded implicitly.
 6. **Mac/phone cutover (in progress):** the repository now includes a Mac launcher that starts the Python/Next stack, configures private HTTPS through Tailscale Serve, preserves trusted origins and Secure cookies, and writes API logs. Verify all user-facing flows on the Mac and phone before treating the target frontend as complete.
 7. **Mac/phone feature verification:** calendar-aware availability/conflicts, context-assisted planning, voice usability, PWA installation, notification delivery, and useful briefing/planning/summary flows tested on the actual Mac, phone, Tailscale, Google, Ollama, Whisper, and TTS setup.
 8. **Final Windows deployment:** adapt the verified Mac-hosted runtime to Windows, then add Windows startup/service hardening and retire the transitional Node path. Do not spend feature effort on Windows before the Mac/phone gate passes.

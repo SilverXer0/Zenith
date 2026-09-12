@@ -42,6 +42,13 @@ fi
 # environment override available for testing another installed model.
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"
 
+ollama_pid=""
+ollama_started=false
+ollama_path="$(command -v ollama || true)"
+if [[ -z "$ollama_path" && -x "/Applications/Ollama.app/Contents/Resources/ollama" ]]; then
+  ollama_path="/Applications/Ollama.app/Contents/Resources/ollama"
+fi
+
 allowed_origins=("http://localhost:3000" "http://127.0.0.1:3000")
 tailscale_path=""
 public_url=""
@@ -82,6 +89,45 @@ export ZENITH_API_ORIGIN="http://127.0.0.1:8000"
 
 api_log="$data_dir/zenith-python-api.log"
 api_error_log="$data_dir/zenith-python-api.error.log"
+ollama_log="$data_dir/ollama.log"
+ollama_error_log="$data_dir/ollama.error.log"
+
+if [[ "${OLLAMA_AUTOSTART:-true}" != "false" && "${OLLAMA_URL:-http://127.0.0.1:11434}" == "http://127.0.0.1:11434" ]]; then
+  if curl --silent --fail --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    print "Ollama is already running."
+  elif [[ -z "$ollama_path" ]]; then
+    print "Ollama was not found; Zenith will run without the assistant."
+  else
+    print "Starting Ollama for the local assistant..."
+    "$ollama_path" serve >"$ollama_log" 2>"$ollama_error_log" &
+    ollama_pid=$!
+    for attempt in {1..30}; do
+      if curl --silent --fail --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+        ollama_started=true
+        break
+      fi
+      if ! kill -0 "$ollama_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 0.5
+    done
+    if [[ "$ollama_started" == false ]]; then
+      print "Ollama did not become ready; Zenith will run without the assistant. See $ollama_error_log."
+    fi
+  fi
+elif [[ "${OLLAMA_AUTOSTART:-true}" == "false" ]]; then
+  print "Ollama autostart is disabled; Zenith will use the assistant only if Ollama is already running."
+fi
+
+ollama_tags="$(curl --silent --fail --max-time 2 http://127.0.0.1:11434/api/tags 2>/dev/null || true)"
+if [[ -n "$ollama_tags" ]]; then
+  if print -r -- "$ollama_tags" | "$python" -c 'import json, os, sys; model = os.environ["OLLAMA_MODEL"]; payload = json.load(sys.stdin); raise SystemExit(0 if any(item.get("name") == model for item in payload.get("models", [])) else 1)' 2>/dev/null; then
+    print "Ollama is ready with $OLLAMA_MODEL."
+  else
+    print "Ollama is running, but $OLLAMA_MODEL is not installed; Zenith will run without the assistant."
+    print "Install it separately with: ollama pull $OLLAMA_MODEL"
+  fi
+fi
 
 print "Starting the Python API..."
 "$python" -m uvicorn backend.app:create_app --factory \
@@ -92,6 +138,9 @@ api_pid=$!
 cleanup() {
   if kill -0 "$api_pid" 2>/dev/null; then
     kill "$api_pid" 2>/dev/null || true
+  fi
+  if [[ "$ollama_started" == true && -n "$ollama_pid" ]] && kill -0 "$ollama_pid" 2>/dev/null; then
+    kill "$ollama_pid" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT INT TERM
