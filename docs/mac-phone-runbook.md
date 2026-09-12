@@ -1,6 +1,6 @@
 # Mac host and phone runbook
 
-Mac is the active Zenith host while feature work and real-device verification are in progress. Windows packaging and automatic startup are intentionally postponed until the final deployment step.
+Mac is the active Zenith host while feature work and real-device verification are in progress. Windows packaging and automatic startup are intentionally postponed until the final deployment step. Optional macOS login startup is available for the active host.
 
 ## Prerequisites
 
@@ -42,6 +42,22 @@ On the Mac and phone:
 4. Create a task on one device and confirm it appears on the other without a refresh.
 
 Do not add `:3000` to the HTTPS URL. Tailscale Serve forwards the private HTTPS address to Zenith's local port 3000.
+
+## Optional start at Mac login
+
+After manually stopping any running Zenith launcher, install the optional macOS LaunchAgent:
+
+~~~zsh
+zsh ./scripts/install-zenith-mac-agent.sh
+~~~
+
+It starts Zenith at login, restarts it after an unexpected exit, and uses the same `.env`, Tailscale HTTPS, and optional Ollama settings as the manual launcher. The launcher and API logs remain in `data/`. Do not also run the manual launcher while the agent is active, because both would compete for Zenith's ports.
+
+To remove automatic startup:
+
+~~~zsh
+zsh ./scripts/install-zenith-mac-agent.sh --remove
+~~~
 
 For local-only Mac development without Tailscale:
 
