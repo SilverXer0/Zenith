@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   api,
   type Briefing,
@@ -62,9 +62,11 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState("");
   const [calendarBusy, setCalendarBusy] = useState(false);
+  const refreshVersion = useRef(0);
   const today = localDateKey();
 
   const refresh = useCallback(async () => {
+    const version = ++refreshVersion.current;
     void taskRevision;
     setLoading(true);
     setRefreshError("");
@@ -79,6 +81,7 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
         api<{ connections: CalendarConnection[] }>("/api/calendar/connections"),
         api<CalendarAvailability>("/api/planning/availability?date=" + today + "&timezone=" + encodeURIComponent(browserTimezone)),
       ]);
+      if (version !== refreshVersion.current) return;
       setBriefing(nextBriefing);
       setMorning(nextMorning);
       setWeek(nextWeek);
@@ -87,15 +90,29 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
       setCalendarConnections(nextConnections.connections);
       setAvailability(nextAvailability);
     } catch (caught) {
-      setRefreshError(caught instanceof Error ? caught.message : "Planning could not be loaded.");
+      if (version === refreshVersion.current) {
+        setRefreshError(caught instanceof Error ? caught.message : "Planning could not be loaded.");
+      }
     } finally {
-      setLoading(false);
+      if (version === refreshVersion.current) setLoading(false);
     }
   }, [today, taskRevision]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => { void refresh(); }, 0);
-    return () => window.clearTimeout(initialLoad);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 300_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      refreshVersion.current += 1;
+      window.clearTimeout(initialLoad);
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [refresh]);
 
   async function updateCalendarConnection(connection: CalendarConnection, patch: { displayName?: string; enabled?: boolean }) {
