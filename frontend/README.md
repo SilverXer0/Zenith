@@ -27,7 +27,7 @@ The shell includes local setup/sign-in, authenticated task capture and editing, 
 
 Voice is deliberately optional. When the Python API reports no configured local adapters, the UI keeps text chat available and explains that voice is not configured. When adapters are configured, microphone recordings are sent only to the local Zenith server and assistant replies can be spoken on demand.
 
-PWA installation and reminders require a secure browser context. `http://localhost` works for local testing; a raw HTTP Tailscale address does not meet browser requirements for installation or notifications. The service worker caches only the public Next app shell and static assets; it never caches `/api/` responses or private task data. Reminders work while Zenith is open and store one notification marker per task per browser day. Closed-app push delivery remains a later deployment decision.
+PWA installation and reminders require a secure browser context. `http://localhost` works for local testing; a raw HTTP Tailscale address does not meet browser requirements for installation or notifications. The service worker caches only the public Next app shell and static assets; it never caches `/api/` responses or private task data. Reminders work while Zenith is open, use the service worker when the installed app supports it, and store one notification marker per task per browser day. Closed-app push delivery remains a later deployment decision.
 
 ## Checks
 

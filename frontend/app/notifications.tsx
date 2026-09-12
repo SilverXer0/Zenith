@@ -8,19 +8,44 @@ function localDateKey() {
   return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
 }
 
-function notifyDueTasks(tasks: Task[]) {
+async function showDueNotification(task: Task) {
+  const title = "Due: " + task.title;
+  const options: NotificationOptions = {
+    body: task.dueDate === localDateKey() ? "Due today" : "Overdue · " + task.dueDate,
+    tag: "zenith-task-" + task.id,
+    data: { path: "/" },
+  };
+  if ("serviceWorker" in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.showNotification(title, options);
+      return true;
+    } catch { /* Fall back to a page notification when the service worker cannot display one. */ }
+  }
+  try {
+    new Notification(title, options);
+    return true;
+  } catch { return false; }
+}
+
+let notificationRun: Promise<void> | null = null;
+
+async function runDueTaskNotifications(tasks: Task[]) {
   if (!("Notification" in window) || !window.isSecureContext || Notification.permission !== "granted") return;
   const today = localDateKey();
   const storageKey = "zenith-notified-" + today;
   let notified = new Set<string>();
   try { notified = new Set(JSON.parse(localStorage.getItem(storageKey) || "[]")); } catch { /* Ignore unavailable browser storage. */ }
   for (const task of tasks.filter((candidate) => !candidate.completed && candidate.dueDate && candidate.dueDate <= today && !notified.has(candidate.id))) {
-    try {
-      new Notification("Due: " + task.title, { body: task.dueDate === today ? "Due today" : "Overdue · " + task.dueDate, tag: "zenith-task-" + task.id });
-      notified.add(task.id);
-    } catch { /* Ignore a notification that the browser declines. */ }
+    if (await showDueNotification(task)) notified.add(task.id);
   }
   try { localStorage.setItem(storageKey, JSON.stringify([...notified])); } catch { /* Ignore unavailable browser storage. */ }
+}
+
+function notifyDueTasks(tasks: Task[]) {
+  if (notificationRun) return notificationRun;
+  notificationRun = runDueTaskNotifications(tasks).finally(() => { notificationRun = null; });
+  return notificationRun;
 }
 
 export function ReminderControls({ tasks }: { tasks: Task[] }) {
@@ -35,7 +60,7 @@ export function ReminderControls({ tasks }: { tasks: Task[] }) {
   }, []);
 
   useEffect(() => {
-    if (permission === "granted") notifyDueTasks(tasks);
+    if (permission === "granted") void notifyDueTasks(tasks);
   }, [permission, tasks]);
 
   async function enable() {
@@ -43,7 +68,7 @@ export function ReminderControls({ tasks }: { tasks: Task[] }) {
     try {
       const next = await Notification.requestPermission();
       setPermission(next);
-      if (next === "granted") notifyDueTasks(tasks);
+      if (next === "granted") void notifyDueTasks(tasks);
     } catch { setPermission("denied"); }
   }
 
