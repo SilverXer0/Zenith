@@ -165,7 +165,7 @@ if [[ -x "$voice_python" ]] && command -v ffmpeg >/dev/null 2>&1 \
    && "$voice_python" -c 'import mlx_whisper' >/dev/null 2>&1; then
   pass_check "MLX Whisper speech input environment is available"
 else
-  warn_check "MLX Whisper speech input is not installed; microphone transcription remains optional."
+  warn_check "MLX Whisper speech input is not installed; run: brew install ffmpeg && zsh ./scripts/setup-zenith-mac-voice.sh"
 fi
 
 if /bin/launchctl print "$domain/$label" >/dev/null 2>&1; then
