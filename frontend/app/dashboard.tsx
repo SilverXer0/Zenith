@@ -109,6 +109,19 @@ export default function Dashboard() {
   const loadVersion = useRef(0);
 
   useEffect(() => {
+    const handleAuthExpired = () => {
+      setUser(null);
+      setSetupRequired(false);
+      setTasks([]);
+      setChat([]);
+      setAssistantHistory([]);
+      setAuthError("Your session expired. Sign in again.");
+    };
+    window.addEventListener("zenith-auth-expired", handleAuthExpired);
+    return () => window.removeEventListener("zenith-auth-expired", handleAuthExpired);
+  }, []);
+
+  useEffect(() => {
     if (!user) return;
     const interval = window.setInterval(() => setToday(displayDate()), 60_000);
     return () => window.clearInterval(interval);

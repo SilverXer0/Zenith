@@ -142,6 +142,9 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   }
   const response = await fetch(path, { ...init, headers, body, cache: "no-store" });
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined" && path !== "/api/auth/session") {
+      window.dispatchEvent(new Event("zenith-auth-expired"));
+    }
     let message = "Zenith could not complete that request.";
     try {
       const payload = (await response.json()) as { error?: string };
@@ -164,6 +167,9 @@ export async function apiBlob(path: string, init: ApiInit = {}): Promise<Blob> {
   }
   const response = await fetch(path, { ...init, headers, body, cache: "no-store" });
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined" && path !== "/api/auth/session") {
+      window.dispatchEvent(new Event("zenith-auth-expired"));
+    }
     let message = "Zenith could not complete that request.";
     try {
       const payload = (await response.json()) as { error?: string };
