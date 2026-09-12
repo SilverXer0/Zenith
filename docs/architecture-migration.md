@@ -25,7 +25,7 @@ These are part of the Mac/phone verification work, not Windows work:
 
 - **Persistent local configuration (implemented):** the Mac launcher loads Google OAuth credentials and other private settings from a local, git-ignored `.env` file so they survive terminal restarts without putting secrets in the repository.
 - **One-command optional Ollama startup (implemented):** the launcher reuses or starts the local Ollama service and verifies the configured model without downloading it, while allowing Zenith Core and the UI to continue when Ollama is stopped or unavailable.
-- **Optional Mac login startup (implemented):** `scripts/install-zenith-mac-agent.sh` registers the launcher with the user-level macOS LaunchAgent service, keeps it alive, and writes launcher logs under the local data directory. Windows startup remains reserved for the final deployment.
+- **Optional Mac login startup (implemented):** `scripts/install-zenith-mac-agent.sh` registers the launcher with the user-level macOS LaunchAgent service, keeps it alive, and writes launcher logs under the local data directory. The launcher validates the active Node.js version before starting. Windows startup remains reserved for the final deployment.
 
 ## Sequence: independently testable commits
 

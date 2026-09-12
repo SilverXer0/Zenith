@@ -21,9 +21,22 @@ if [[ ! -x "$python" ]]; then
   exit 1
 fi
 
+node_path="$(command -v node || true)"
+if [[ -z "$node_path" ]]; then
+  print -u2 "Node.js was not found. Install Node.js 20.9 or newer."
+  exit 1
+fi
+
+node_version="$($node_path --version 2>/dev/null || true)"
+if ! "$node_path" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major >= 21 || (major === 20 && minor >= 9) ? 0 : 1)' 2>/dev/null; then
+  print -u2 "Node.js 20.9 or newer is required. Found ${node_version:-an unknown version} at $node_path."
+  print -u2 "Put a newer Node.js installation earlier in PATH, then run Zenith again."
+  exit 1
+fi
+
 npm_path="$(command -v npm || true)"
 if [[ -z "$npm_path" ]]; then
-  print -u2 "npm was not found. Install Node.js 20.9 or newer."
+  print -u2 "npm was not found beside the active Node.js installation."
   exit 1
 fi
 

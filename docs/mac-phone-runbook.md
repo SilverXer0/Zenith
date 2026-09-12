@@ -32,7 +32,7 @@ Stop any other Zenith server first. Run:
 zsh ./scripts/start-zenith-mac.sh
 ~~~
 
-The launcher automatically loads private settings from `.env`, starts the Python API and Next frontend on localhost, rebuilds the current frontend, configures private Tailscale HTTPS, and prints the exact URL. Keep the terminal open. On first use, copy `.env.example` to `.env` and fill in the Google OAuth values.
+The launcher automatically loads private settings from `.env`, checks that Node.js 20.9+ is active, starts the Python API and Next frontend on localhost, rebuilds the current frontend, configures private Tailscale HTTPS, and prints the exact URL. Keep the terminal open. On first use, copy `.env.example` to `.env` and fill in the Google OAuth values.
 
 On the Mac and phone:
 
