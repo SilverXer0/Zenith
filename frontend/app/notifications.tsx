@@ -63,6 +63,17 @@ export function ReminderControls({ tasks }: { tasks: Task[] }) {
     if (permission === "granted") void notifyDueTasks(tasks);
   }, [permission, tasks]);
 
+  useEffect(() => {
+    if (permission !== "granted") return;
+    const check = () => { void notifyDueTasks(tasks); };
+    const interval = window.setInterval(check, 60_000);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [permission, tasks]);
+
   async function enable() {
     if (permission === "unsupported") return;
     try {
