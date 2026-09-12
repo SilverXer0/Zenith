@@ -20,9 +20,9 @@ Open http://localhost:3000. Tasks persist in `data/zenith.sqlite` (or `ZENITH_DA
 
 ### Private cross-device access
 
-For the active Mac-hosted setup, install Tailscale on the Mac and each device that should access Zenith, then sign in to the same private tailnet. Enable MagicDNS and HTTPS certificates for that tailnet. From the Zenith folder, run `zsh ./scripts/start-zenith-mac.sh`. The helper binds Zenith's local services behind a private HTTPS Tailscale address and prints the URL to open on your phone. This keeps Zenith off the public internet; do not port-forward port 3000. If you want Zenith to start at Mac login, use the optional `zsh ./scripts/install-zenith-mac-agent.sh` installer described in the Mac/phone runbook.
+For the active Mac-hosted setup, install Tailscale on the Mac and each device that should access Zenith, then sign in to the same private tailnet. Enable MagicDNS and HTTPS certificates for that tailnet. From the Zenith folder, run `zsh ./scripts/start-zenith-mac.sh`. The helper binds Zenith's local services behind a private HTTPS Tailscale address and prints the URL to open on your phone. This keeps Zenith off the public internet; do not port-forward Zenith's local ports. If you want to use alternate local ports for testing, set `ZENITH_API_PORT` and `ZENITH_FRONTEND_PORT`; the launcher and diagnostics use those values consistently. If you want Zenith to start at Mac login, use the optional `zsh ./scripts/install-zenith-mac-agent.sh` installer described in the Mac/phone runbook.
 
-Use `zsh ./scripts/check-zenith-mac.sh` for a read-only diagnostic summary when troubleshooting the Mac host. It does not print private configuration values or change any services.
+Use `zsh ./scripts/check-zenith-mac.sh` for a read-only diagnostic summary when troubleshooting the Mac host. It does not print private configuration values or change any services. The launcher itself can select a supported Node.js installation from common Homebrew locations when an older version is first in the shell PATH.
 
 ### Live task updates
 

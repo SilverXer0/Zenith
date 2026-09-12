@@ -25,21 +25,51 @@ if [[ ! -x "$python" ]]; then
 fi
 
 node_path="$(command -v node || true)"
-if [[ -z "$node_path" ]]; then
-  print -u2 "Node.js was not found. Install Node.js 20.9 or newer."
+node_version=""
+node_supported=false
+for candidate in "$node_path" "/opt/homebrew/bin/node" "/usr/local/bin/node"; do
+  if [[ -z "$candidate" || ! -x "$candidate" ]]; then
+    continue
+  fi
+  if "$candidate" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major >= 21 || (major === 20 && minor >= 9) ? 0 : 1)' 2>/dev/null; then
+    node_path="$candidate"
+    node_version="$($candidate --version 2>/dev/null || true)"
+    node_supported=true
+    break
+  fi
+  if [[ -z "$node_version" ]]; then
+    node_version="$($candidate --version 2>/dev/null || true)"
+  fi
+done
+
+if [[ "$node_supported" == false ]]; then
+  if [[ -z "$node_path" ]]; then
+    print -u2 "Node.js was not found. Install Node.js 20.9 or newer."
+  else
+    print -u2 "Node.js 20.9 or newer is required. Found ${node_version:-an unknown version} at $node_path."
+    print -u2 "Install a newer Node.js version or place it earlier in PATH."
+  fi
   exit 1
 fi
 
-node_version="$($node_path --version 2>/dev/null || true)"
-if ! "$node_path" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major >= 21 || (major === 20 && minor >= 9) ? 0 : 1)' 2>/dev/null; then
-  print -u2 "Node.js 20.9 or newer is required. Found ${node_version:-an unknown version} at $node_path."
-  print -u2 "Put a newer Node.js installation earlier in PATH, then run Zenith again."
-  exit 1
-fi
-
+# Keep npm's /usr/bin/env node shebang aligned with the selected runtime.
+export PATH="${node_path:h}:$PATH"
 npm_path="$(command -v npm || true)"
 if [[ -z "$npm_path" ]]; then
   print -u2 "npm was not found beside the active Node.js installation."
+  exit 1
+fi
+
+api_port="${ZENITH_API_PORT:-8000}"
+frontend_port="${ZENITH_FRONTEND_PORT:-3000}"
+for port in "$api_port" "$frontend_port"; do
+  if [[ "$port" != <-> ]] || (( port < 1 || port > 65535 )); then
+    print -u2 "Zenith ports must be whole numbers between 1 and 65535."
+    exit 1
+  fi
+done
+if [[ "$api_port" == "$frontend_port" ]]; then
+  print -u2 "Zenith API and frontend ports must be different."
   exit 1
 fi
 
@@ -83,7 +113,7 @@ if [[ -z "$ollama_path" && -x "/Applications/Ollama.app/Contents/Resources/ollam
 fi
 ollama_url="${OLLAMA_URL:-http://127.0.0.1:11434}"
 
-allowed_origins=("http://localhost:3000" "http://127.0.0.1:3000")
+allowed_origins=("http://localhost:$frontend_port" "http://127.0.0.1:$frontend_port")
 tailscale_path=""
 public_url=""
 
@@ -107,7 +137,7 @@ if [[ "$local_only" == false ]]; then
   allowed_origins=("$public_url" "${allowed_origins[@]}")
 
   print "Configuring private Tailscale HTTPS access..."
-  if ! "$tailscale_path" serve --bg --https=443 http://127.0.0.1:3000; then
+  if ! "$tailscale_path" serve --bg --https=443 "http://127.0.0.1:$frontend_port"; then
     print -u2 "Tailscale Serve could not be configured. Enable HTTPS certificates for this tailnet, then run Zenith again."
     exit 1
   fi
@@ -118,12 +148,12 @@ if [[ "$local_only" == false ]]; then
   export ZENITH_COOKIE_SECURE=true
 else
   unset ZENITH_COOKIE_SECURE
-  print "Zenith will be available locally at http://localhost:3000"
+  print "Zenith will be available locally at http://localhost:$frontend_port"
 fi
 
 export ZENITH_DATA_DIR="$data_dir"
 export ZENITH_ALLOWED_ORIGINS="${(j:,:)allowed_origins}"
-export ZENITH_API_ORIGIN="http://127.0.0.1:8000"
+export ZENITH_API_ORIGIN="http://127.0.0.1:$api_port"
 
 api_log="$data_dir/zenith-python-api.log"
 api_error_log="$data_dir/zenith-python-api.error.log"
@@ -169,7 +199,7 @@ fi
 
 print "Starting the Python API..."
 "$python" -m uvicorn backend.app:create_app --factory \
-  --host 127.0.0.1 --port 8000 \
+  --host 127.0.0.1 --port "$api_port" \
   >"$api_log" 2>"$api_error_log" &
 api_pid=$!
 
@@ -185,7 +215,7 @@ trap cleanup EXIT INT TERM
 
 ready=false
 for attempt in {1..60}; do
-  if curl --silent --fail --max-time 2 http://127.0.0.1:8000/api/health >/dev/null; then
+  if curl --silent --fail --max-time 2 "http://127.0.0.1:$api_port/api/health" >/dev/null; then
     ready=true
     break
   fi
@@ -204,4 +234,4 @@ fi
 print "Building the current Next frontend..."
 "$npm_path" --prefix "$frontend" run build:webpack
 print "Starting the Next frontend. Keep this window open while Zenith is running."
-"$npm_path" --prefix "$frontend" run start -- --hostname 127.0.0.1 --port 3000
+"$npm_path" --prefix "$frontend" run start -- --hostname 127.0.0.1 --port "$frontend_port"

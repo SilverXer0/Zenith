@@ -32,7 +32,7 @@ Stop any other Zenith server first. Run:
 zsh ./scripts/start-zenith-mac.sh
 ~~~
 
-The launcher automatically loads private settings from `.env`, checks that Node.js 20.9+ is active, starts the Python API and Next frontend on localhost, rebuilds the current frontend, configures private Tailscale HTTPS, enables built-in Mac speech output, and prints the exact URL. Keep the terminal open. On first use, copy `.env.example` to `.env` and fill in the Google OAuth values.
+The launcher automatically loads private settings from `.env`, selects a supported Node.js 20.9+ installation (including common Apple Silicon and Intel Homebrew locations), starts the Python API and Next frontend on localhost, rebuilds the current frontend, configures private Tailscale HTTPS, enables built-in Mac speech output, and prints the exact URL. Keep the terminal open. On first use, copy `.env.example` to `.env` and fill in the Google OAuth values.
 
 On the Mac and phone:
 
@@ -41,7 +41,7 @@ On the Mac and phone:
 3. Sign in with the same Zenith account.
 4. Create a task on one device and confirm it appears on the other without a refresh.
 
-Do not add `:3000` to the HTTPS URL. Tailscale Serve forwards the private HTTPS address to Zenith's local port 3000.
+Do not add a port to the HTTPS URL. Tailscale Serve forwards the private HTTPS address to Zenith's configured frontend port (3000 by default).
 
 To inspect the Mac setup without changing anything, run:
 
@@ -49,7 +49,7 @@ To inspect the Mac setup without changing anything, run:
 zsh ./scripts/check-zenith-mac.sh
 ~~~
 
-It checks the required runtimes, local API/frontend, private configuration, Tailscale, Ollama, native Mac speech, optional Whisper, and the login agent. Warnings for Ollama, Calendar, Whisper, or the login agent are expected when those optional pieces are not enabled; it never prints secrets or modifies configuration.
+It checks the required runtimes, local API/frontend, private configuration, Tailscale, Ollama, native Mac speech, optional Whisper, and the login agent. It uses the same supported Node.js selection as the launcher. Warnings for Ollama, Calendar, Whisper, or the login agent are expected when those optional pieces are not enabled; it never prints secrets or modifies configuration.
 
 ## Optional start at Mac login
 

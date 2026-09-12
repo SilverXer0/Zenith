@@ -33,16 +33,34 @@ print "Zenith Mac diagnostics"
 print "Project: $root"
 print ""
 
-node_path="$(command -v node || true)"
-if [[ -z "$node_path" ]]; then
+path_node="$(command -v node || true)"
+node_path="$path_node"
+node_version=""
+node_supported=false
+for candidate in "$node_path" "/opt/homebrew/bin/node" "/usr/local/bin/node"; do
+  if [[ -z "$candidate" || ! -x "$candidate" ]]; then
+    continue
+  fi
+  if "$candidate" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major >= 21 || (major === 20 && minor >= 9) ? 0 : 1)' 2>/dev/null; then
+    node_path="$candidate"
+    node_version="$($candidate --version 2>/dev/null || true)"
+    node_supported=true
+    break
+  fi
+  if [[ -z "$node_version" ]]; then
+    node_version="$($candidate --version 2>/dev/null || true)"
+  fi
+done
+if [[ "$node_supported" == true ]]; then
+  export PATH="${node_path:h}:$PATH"
+  pass_check "Node.js $node_version ($node_path)"
+  if [[ -n "$path_node" && "$path_node" != "$node_path" ]]; then
+    print "INFO Older Node.js was first on PATH; diagnostics selected the supported installation."
+  fi
+elif [[ -z "$node_path" ]]; then
   fail_check "Node.js is not on PATH. Install Node.js 20.9 or newer."
 else
-  node_version="$($node_path --version 2>/dev/null || true)"
-  if "$node_path" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major >= 21 || (major === 20 && minor >= 9) ? 0 : 1)' 2>/dev/null; then
-    pass_check "Node.js $node_version ($node_path)"
-  else
-    fail_check "Node.js 20.9+ is required; found ${node_version:-an unknown version} ($node_path)"
-  fi
+  fail_check "Node.js 20.9+ is required; found ${node_version:-an unknown version} ($node_path)"
 fi
 
 npm_path="$(command -v npm || true)"
@@ -74,6 +92,9 @@ else
   warn_check "No .env file found; Calendar and explicit local-service settings are unavailable."
 fi
 
+api_port="${ZENITH_API_PORT:-8000}"
+frontend_port="${ZENITH_FRONTEND_PORT:-3000}"
+
 if [[ -n "${GOOGLE_CLIENT_ID:-}" && -n "${GOOGLE_CLIENT_SECRET:-}" \
       && "${GOOGLE_CLIENT_ID}" != "your-oauth-client-id.apps.googleusercontent.com" \
       && "${GOOGLE_CLIENT_SECRET}" != "your-oauth-client-secret" ]]; then
@@ -82,16 +103,16 @@ else
   warn_check "Google Calendar credentials are not configured. Calendar remains optional."
 fi
 
-if [[ -n "$python" && -x "$python" ]] && curl --silent --fail --max-time 2 http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
-  pass_check "Python API is responding on 127.0.0.1:8000"
+if [[ -n "$python" && -x "$python" ]] && curl --silent --fail --max-time 2 "http://127.0.0.1:$api_port/api/health" >/dev/null 2>&1; then
+  pass_check "Python API is responding on 127.0.0.1:$api_port"
 else
-  warn_check "Python API is not responding on 127.0.0.1:8000. Start Zenith before testing runtime access."
+  warn_check "Python API is not responding on 127.0.0.1:$api_port. Start Zenith before testing runtime access."
 fi
 
-if curl --silent --fail --max-time 2 http://127.0.0.1:3000/ >/dev/null 2>&1; then
-  pass_check "Frontend is responding on 127.0.0.1:3000"
+if curl --silent --fail --max-time 2 "http://127.0.0.1:$frontend_port/" >/dev/null 2>&1; then
+  pass_check "Frontend is responding on 127.0.0.1:$frontend_port"
 else
-  warn_check "Frontend is not responding on 127.0.0.1:3000. Start Zenith before opening the phone URL."
+  warn_check "Frontend is not responding on 127.0.0.1:$frontend_port. Start Zenith before opening the phone URL."
 fi
 
 tailscale_path="$(command -v tailscale || true)"
