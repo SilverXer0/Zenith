@@ -163,5 +163,7 @@ if [[ "$ready" == false ]]; then
   exit 1
 fi
 
+print "Building the current Next frontend..."
+"$npm_path" --prefix "$frontend" run build:webpack
 print "Starting the Next frontend. Keep this window open while Zenith is running."
 "$npm_path" --prefix "$frontend" run start -- --hostname 127.0.0.1 --port 3000
