@@ -39,6 +39,15 @@ class EventBrokerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.events.wait(a, 0.01), "A slow reader must not have a 10,000-event backlog")
         self.assertEqual(self.events.count, 3)
 
+    async def test_multiple_event_types_are_coalesced_per_connection(self):
+        stream = self.events.stream("user-a", "session-a", self.auth)
+        await anext(stream)
+        await asyncio.to_thread(self.events.publish, "user-a", "memory_changed")
+        await asyncio.to_thread(self.events.publish, "user-a", "calendar_changed")
+        self.assertEqual(await anext(stream), b"event: calendar_changed\ndata: {}\n\n")
+        self.assertEqual(await anext(stream), b"event: memory_changed\ndata: {}\n\n")
+        await stream.aclose()
+
     async def test_every_connection_starts_with_ready_and_idle_heartbeat(self):
         for _ in range(2):
             stream = self.events.stream("user-a", "session-a", self.auth)

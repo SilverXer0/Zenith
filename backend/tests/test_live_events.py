@@ -189,6 +189,29 @@ class LiveEventTests(unittest.TestCase):
         for stream in (first, second):
             stream.event("tasks_changed")
 
+    def test_memory_mutations_reach_both_sessions(self):
+        second_cookie = self.second_session()
+        first, second = self.stream(self.cookie), self.stream(second_cookie)
+        status, body, _ = self.api("POST", "/api/memory", {"content": "Shared preference"}, self.cookie)
+        self.assertEqual(status, 201)
+        for stream in (first, second):
+            stream.event("memory_changed")
+        memory_id = body["memory"]["id"]
+        self.assertEqual(self.api("PATCH", f"/api/memory/{memory_id}", {"category": "preferences"}, second_cookie)[0], 200)
+        for stream in (first, second):
+            stream.event("memory_changed")
+        self.assertEqual(self.api("DELETE", f"/api/memory/{memory_id}", cookie=self.cookie)[0], 204)
+        for stream in (first, second):
+            stream.event("memory_changed")
+
+    def test_calendar_connection_mutations_reach_both_sessions(self):
+        second_cookie = self.second_session()
+        first, second = self.stream(self.cookie), self.stream(second_cookie)
+        with patch.object(self.app.state.database, "update_calendar_connection", return_value={"id": "connection", "enabled": True}):
+            self.assertEqual(self.api("PATCH", "/api/calendar/connections/connection", {"enabled": True}, self.cookie)[0], 200)
+        for stream in (first, second):
+            stream.event("calendar_changed")
+
     def test_changes_are_private_to_the_owner(self):
         with self.app.state.database.connection(write=True) as connection:
             connection.execute("INSERT INTO users (id,display_name,password_hash,created_at) VALUES (?,?,?,?)",

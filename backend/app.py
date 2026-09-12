@@ -106,7 +106,8 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.get("/api/calendar/oauth/callback")
     def calendar_callback(state: str | None = None, code: str | None = None,
                           error: str | None = None):
-        google_calendar.complete_callback(state, code, error)
+        user_id = google_calendar.complete_callback(state, code, error)
+        events.publish(user_id, "calendar_changed")
         return RedirectResponse("/?calendar=connected", status_code=302)
 
     @app.post("/api/auth/setup")
@@ -168,13 +169,16 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.patch("/api/calendar/connections/{connection_id}")
     def update_calendar_connection(connection_id: str, patch: CalendarConnectionPatch,
                                    current_user: dict = Depends(user)):
-        return {"connection": database.update_calendar_connection(
+        result = {"connection": database.update_calendar_connection(
             current_user["id"], connection_id,
             display_name=patch.displayName, enabled=patch.enabled)}
+        events.publish(current_user["id"], "calendar_changed")
+        return result
 
     @app.delete("/api/calendar/connections/{connection_id}", status_code=204)
     def delete_calendar_connection(connection_id: str, current_user: dict = Depends(user)):
         google_calendar.disconnect(current_user["id"], connection_id)
+        events.publish(current_user["id"], "calendar_changed")
         return Response(status_code=204)
 
     @app.get("/api/calendar/connect")
@@ -189,6 +193,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.delete("/api/calendar/connection", status_code=204)
     def disconnect_calendar(current_user: dict = Depends(user)):
         google_calendar.disconnect(current_user["id"])
+        events.publish(current_user["id"], "calendar_changed")
         return Response(status_code=204)
 
     @app.get("/api/voice/status")
@@ -226,15 +231,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/memory", status_code=201)
     def create_memory(patch: MemoryPatch, current_user: dict = Depends(user)):
-        return {"memory": database.save_memory(current_user["id"], patch.model_dump(exclude_unset=True))}
+        result = {"memory": database.save_memory(current_user["id"], patch.model_dump(exclude_unset=True))}
+        events.publish(current_user["id"], "memory_changed")
+        return result
 
     @app.patch("/api/memory/{memory_id}")
     def update_memory(memory_id: str, patch: MemoryPatch, current_user: dict = Depends(user)):
-        return {"memory": database.save_memory(current_user["id"], patch.model_dump(exclude_unset=True), memory_id)}
+        result = {"memory": database.save_memory(current_user["id"], patch.model_dump(exclude_unset=True), memory_id)}
+        events.publish(current_user["id"], "memory_changed")
+        return result
 
     @app.delete("/api/memory/{memory_id}", status_code=204)
     def delete_memory(memory_id: str, current_user: dict = Depends(user)):
         database.delete_memory(current_user["id"], memory_id)
+        events.publish(current_user["id"], "memory_changed")
         return Response(status_code=204)
 
     @app.get("/api/briefing")

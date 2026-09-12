@@ -1,4 +1,4 @@
-"""Bounded, per-user task invalidations for a single Zenith server process."""
+"""Bounded, per-user data invalidations for a single Zenith server process."""
 
 import asyncio
 import sqlite3
@@ -19,7 +19,7 @@ class Subscription:
     session_hash: str
     loop: asyncio.AbstractEventLoop
     wake: asyncio.Event = field(default_factory=asyncio.Event)
-    pending: bool = False
+    pending_events: set[str] = field(default_factory=set)
     wake_scheduled: bool = False
     closed: bool = False
 
@@ -45,7 +45,7 @@ class TaskEvents:
         # Runs on the subscriber's event loop, never on a request worker thread.
         with self._lock:
             subscription.wake_scheduled = False
-            if subscription.pending or subscription.closed:
+            if subscription.pending_events or subscription.closed:
                 subscription.wake.set()
 
     def _schedule_wake(self, subscription: Subscription):
@@ -58,25 +58,27 @@ class TaskEvents:
             subscription.wake_scheduled = False
             self.unsubscribe(subscription)
 
-    def publish(self, user_id: str):
+    def publish(self, user_id: str, event: str = "tasks_changed"):
+        if not event or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789_" for character in event):
+            raise ValueError("Event names must contain lowercase letters, numbers, and underscores.")
         with self._lock:
             for subscription in tuple(self._users.get(user_id, ())):
-                if subscription.closed or subscription.pending:
+                if subscription.closed:
                     continue
-                # At most one queued invalidation AND one scheduled wake per client.
-                # A slow client needs the latest snapshot, not a backlog of changes.
-                subscription.pending = True
+                # Keep one pending marker per data type. A slow client needs the
+                # latest snapshot, not a backlog of changes.
+                subscription.pending_events.add(event)
                 self._schedule_wake(subscription)
 
-    async def wait(self, subscription: Subscription, timeout: float) -> bool:
+    async def wait(self, subscription: Subscription, timeout: float) -> set[str]:
         if not subscription.closed:
             try:
                 await asyncio.wait_for(subscription.wake.wait(), timeout)
             except TimeoutError:
                 pass
         with self._lock:
-            changed = subscription.pending
-            subscription.pending = False
+            changed = set(subscription.pending_events)
+            subscription.pending_events.clear()
             subscription.wake.clear()
             return changed
 
@@ -122,7 +124,11 @@ class TaskEvents:
                 changed = await self.wait(subscription, self.heartbeat_interval)
                 if not await authorized():
                     break
-                yield b"event: tasks_changed\ndata: {}\n\n" if changed else b": heartbeat\n\n"
+                if changed:
+                    for event in sorted(changed):
+                        yield f"event: {event}\ndata: {{}}\n\n".encode("utf-8")
+                else:
+                    yield b": heartbeat\n\n"
         finally:
             self.unsubscribe(subscription)
 

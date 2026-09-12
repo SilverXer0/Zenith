@@ -136,6 +136,7 @@ class GoogleCalendar:
             pass
         self.database.save_calendar_connection(user_id, access_token, refresh_token,
                                                self._token_expiration(token), calendar_name, timestamp())
+        return user_id
 
     def events(self, user_id: str, start: str | None = None, end: str | None = None) -> list[dict]:
         self._require_configured()

@@ -115,6 +115,12 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    const source = new EventSource("/api/events");
+    source.addEventListener("calendar_changed", () => { void refresh(); });
+    return () => source.close();
+  }, [refresh]);
+
   async function updateCalendarConnection(connection: CalendarConnection, patch: { displayName?: string; enabled?: boolean }) {
     setCalendarBusy(true);
     try {
@@ -187,7 +193,9 @@ function MemoryPanel() {
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => { void load(); }, 0);
-    return () => window.clearTimeout(initialLoad);
+    const source = new EventSource("/api/events");
+    source.addEventListener("memory_changed", () => { void load(); });
+    return () => { window.clearTimeout(initialLoad); source.close(); };
   }, [load]);
 
   function beginEdit(memory: Memory) {
