@@ -74,7 +74,17 @@ ZENITH_TTS_COMMAND=/absolute/path/to/Zenith/backend/.venv/bin/python
 ZENITH_TTS_ARGS=["scripts/macos-say-speak.py","{text}","{output}"]
 ~~~
 
-Replace the path with the absolute path to your Zenith folder. Restart the launcher afterward. Zenith will show a `Speak reply` control when the adapter is available. Speech-to-text still requires a separate local Whisper installation and configuration.
+Replace the path with the absolute path to your Zenith folder. Restart the launcher afterward. Zenith will show a `Speak reply` control when the adapter is available.
+
+For speech-to-text on the M1 Mac, install the Apple-Silicon MLX Whisper adapter in its own environment:
+
+~~~zsh
+python3 -m venv backend/.venv-voice
+backend/.venv-voice/bin/python -m pip install mlx-whisper
+brew install ffmpeg
+~~~
+
+Then add `ZENITH_STT_COMMAND=/Users/sharan/Documents/Zenith/backend/.venv-voice/bin/python`, `ZENITH_STT_ARGS=["scripts/mlx-whisper-transcribe.py","{input}"]`, and `ZENITH_WHISPER_MODEL=mlx-community/whisper-base-mlx` to `.env`. The first transcription downloads the model; transcription afterward remains local. Restart the launcher after changing `.env`.
 
 The launcher’s Ollama startup is intentionally local-only. The OAuth secret stays outside Git, and Zenith still starts normally when Ollama is unavailable.
 
