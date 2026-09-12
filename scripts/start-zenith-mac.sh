@@ -97,16 +97,20 @@ if [[ "$local_only" == false ]]; then
     exit 1
   fi
 
-  dns_name="$($tailscale_path status --json | "$python" -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
+  tailscale_status="$($tailscale_path status --json 2>/dev/null || true)"
+  dns_name="$(print -r -- "$tailscale_status" | "$python" -c 'import json, sys; print(json.load(sys.stdin).get("Self", {}).get("DNSName", "").rstrip("."))' 2>/dev/null || true)"
   if [[ -z "$dns_name" ]]; then
-    print -u2 "Could not find this Mac's Tailscale DNS name. Enable MagicDNS and try again."
+    print -u2 "Could not find this Mac's Tailscale DNS name. Confirm Tailscale is connected and MagicDNS is enabled, then try again."
     exit 1
   fi
   public_url="https://$dns_name"
   allowed_origins=("$public_url" "${allowed_origins[@]}")
 
   print "Configuring private Tailscale HTTPS access..."
-  "$tailscale_path" serve --bg --https=443 http://127.0.0.1:3000
+  if ! "$tailscale_path" serve --bg --https=443 http://127.0.0.1:3000; then
+    print -u2 "Tailscale Serve could not be configured. Enable HTTPS certificates for this tailnet, then run Zenith again."
+    exit 1
+  fi
   print "Zenith will be available privately at $public_url"
   if [[ -z "${GOOGLE_REDIRECT_URI:-}" ]]; then
     export GOOGLE_REDIRECT_URI="$public_url/api/calendar/oauth/callback"

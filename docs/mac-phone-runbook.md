@@ -36,7 +36,7 @@ The launcher automatically loads private settings from `.env`, checks that Node.
 
 On the Mac and phone:
 
-1. Open Tailscale and confirm both devices are connected to the same tailnet.
+1. Open Tailscale and confirm both devices are connected to the same tailnet. MagicDNS and HTTPS certificates must be enabled for the tailnet; otherwise the launcher will stop with a setup message.
 2. Open the exact `https://...ts.net` URL printed by the launcher.
 3. Sign in with the same Zenith account.
 4. Create a task on one device and confirm it appears on the other without a refresh.
