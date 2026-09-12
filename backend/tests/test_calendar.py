@@ -166,7 +166,9 @@ class CalendarTests(unittest.TestCase):
         anonymous = TestClient(self.app)
         self.addCleanup(anonymous.close)
         for method, path in (("GET", "/api/calendar/status"), ("GET", "/api/calendar/connect"),
-                             ("GET", "/api/calendar/events"), ("DELETE", "/api/calendar/connection")):
+                             ("GET", "/api/calendar/connections"), ("GET", "/api/calendar/events"),
+                             ("DELETE", "/api/calendar/connection"), ("PATCH", "/api/calendar/connections/id"),
+                             ("DELETE", "/api/calendar/connections/id")):
             self.assertEqual(anonymous.request(method, path).status_code, 401)
         self.assertEqual(anonymous.get("/api/calendar/oauth/callback").status_code, 400)
         self.assertEqual(self.client.get("/api/calendar/status").json(),
@@ -196,6 +198,7 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(query["scope"], [CALENDAR_SCOPE])
         self.assertEqual(callback.status_code, 302)
         self.assertEqual(callback.headers["location"], "/?calendar=connected")
+        connection_id = self.client.get("/api/calendar/connections").json()["connections"][0]["id"]
         token_request = next(item for item in self.mock.requests if item["method"] == "POST")
         self.assertEqual(token_request["form"]["grant_type"], ["authorization_code"])
         self.assertEqual(token_request["form"]["redirect_uri"], [os.environ["GOOGLE_REDIRECT_URI"]])
@@ -208,11 +211,13 @@ class CalendarTests(unittest.TestCase):
                                  params={"state": query["state"][0], "code": "mock-code"})
         self.assertEqual(replay.status_code, 400)
         expected = [
+            {"id": "event-2", "title": "Untitled event", "start": "2026-09-04",
+             "end": "2026-09-05", "allDay": True, "location": None, "status": "confirmed",
+             "calendarId": connection_id, "calendarName": "Personal Calendar"},
             {"id": "event-1", "title": "Focus time", "start": "2026-09-04T18:00:00-07:00",
              "end": "2026-09-04T19:00:00-07:00", "allDay": False,
-             "location": "Home", "status": "confirmed"},
-            {"id": "event-2", "title": "Untitled event", "start": "2026-09-04",
-             "end": "2026-09-05", "allDay": True, "location": None, "status": "confirmed"},
+             "location": "Home", "status": "confirmed", "calendarId": connection_id,
+             "calendarName": "Personal Calendar"},
         ]
         response = self.client.get("/api/calendar/events",
                                    params={"start": "2026-09-04T00:00:00Z", "end": "2026-09-11T00:00:00Z"})
@@ -260,6 +265,30 @@ class CalendarTests(unittest.TestCase):
                                       follow_redirects=False).status_code, 302)
         self.assertFalse(self.client.get("/api/calendar/status").json()["connected"])
         self.assertTrue(other.get("/api/calendar/status").json()["connected"])
+
+    def test_multiple_connections_can_be_named_paused_and_removed_independently(self):
+        self.configure()
+        self.connect()
+        self.connect()
+        connections = self.client.get("/api/calendar/connections").json()["connections"]
+        self.assertEqual(len(connections), 2)
+        self.assertEqual({item["displayName"] for item in connections}, {"Personal Calendar"})
+        first, second = connections
+        renamed = self.client.patch(f"/api/calendar/connections/{second['id']}",
+                                    json={"displayName": "Work", "enabled": False})
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed.json()["connection"]["displayName"], "Work")
+        self.assertFalse(renamed.json()["connection"]["enabled"])
+        events = self.client.get("/api/calendar/events").json()["events"]
+        self.assertEqual(len(events), 2)
+        self.assertEqual({event["calendarId"] for event in events}, {first["id"]})
+        self.assertEqual({event["calendarName"] for event in events}, {"Personal Calendar"})
+        deleted = self.client.delete(f"/api/calendar/connections/{first['id']}")
+        self.assertEqual(deleted.status_code, 204)
+        remaining = self.client.get("/api/calendar/connections").json()["connections"]
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["displayName"], "Work")
+        self.assertEqual(self.client.get("/api/calendar/events").status_code, 409)
 
     def test_expired_and_incomplete_states_are_consumed_without_remote_calls(self):
         self.configure()

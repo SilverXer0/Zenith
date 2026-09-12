@@ -76,10 +76,14 @@ class GoogleCalendar:
         return os.environ.get("GOOGLE_REDIRECT_URI") or "http://127.0.0.1:3000/api/calendar/oauth/callback"
 
     def status(self, user_id: str) -> dict:
-        account = self.database.calendar_account(user_id)
+        connections = self.database.list_calendar_connections(user_id)
+        account = next((item for item in connections if item["enabled"]), connections[0] if connections else None)
         return {"configured": self.configured(), "connected": bool(account),
                 "calendarName": account["calendarName"] if account else None,
                 "connectedAt": account["connectedAt"] if account else None}
+
+    def connections(self, user_id: str) -> list[dict]:
+        return self.database.list_calendar_connections(user_id)
 
     def connect_url(self, user_id: str) -> str:
         self._require_configured()
@@ -118,8 +122,7 @@ class GoogleCalendar:
         except RemoteError:
             raise ApiError(502, "Google Calendar authorization could not be completed.") from None
         access_token = self._token_text(token, "access_token")
-        existing = self.database.calendar_account(user_id)
-        refresh_token = self._token_text(token, "refresh_token") or (existing or {}).get("refreshToken")
+        refresh_token = self._token_text(token, "refresh_token")
         if not access_token or not refresh_token:
             raise ApiError(502, "Google did not provide a reusable Calendar authorization. Please try connecting again.")
         calendar_name = "Google Calendar"
@@ -130,18 +133,36 @@ class GoogleCalendar:
                 calendar_name = primary["summary"].strip()[:200]
         except RemoteError:
             pass
-        self.database.save_calendar_account(user_id, access_token, refresh_token,
-                                            self._token_expiration(token), calendar_name, timestamp())
+        self.database.save_calendar_connection(user_id, access_token, refresh_token,
+                                               self._token_expiration(token), calendar_name, timestamp())
 
     def events(self, user_id: str, start: str | None = None, end: str | None = None) -> list[dict]:
         self._require_configured()
         range_start, range_end = calendar_range(start, end)
-        return self._list_events(user_id, range_start, range_end)
+        connections = self.database.list_calendar_connections(user_id, enabled_only=True, include_secrets=True)
+        if not connections:
+            raise ApiError(409, "No enabled Google Calendar connections are available.")
+        events = []
+        failures = 0
+        errors = []
+        for connection in connections:
+            try:
+                events.extend(self._list_events(user_id, connection, range_start, range_end))
+            except (ApiError, RemoteError) as error:
+                failures += 1
+                errors.append(error)
+        if failures and not events:
+            auth_error = next((error for error in errors if isinstance(error, ApiError) and error.status == 401), None)
+            if auth_error:
+                raise auth_error
+            raise ApiError(503, "Google Calendar is temporarily unavailable.")
+        events.sort(key=lambda event: (event.get("start") or "9999", event.get("id") or ""))
+        return events[:100]
 
     def projection(self, user_id: str, start: str, end: str) -> dict:
-        account = self.database.calendar_account(user_id)
-        result = {"connected": bool(account), "available": False, "events": []}
-        if not account or not self.configured():
+        connections = self.database.list_calendar_connections(user_id)
+        result = {"connected": bool(connections), "available": False, "events": []}
+        if not connections or not self.configured():
             return result
         try:
             result["events"] = self.events(user_id, start, end)
@@ -153,11 +174,21 @@ class GoogleCalendar:
     def assistant_context(self, user_id: str) -> str:
         if not self.configured():
             return "Google Calendar is not configured."
-        if not self.database.calendar_account(user_id):
+        connections = self.database.list_calendar_connections(user_id, enabled_only=True, include_secrets=True)
+        if not connections:
+            if self.database.calendar_connected(user_id):
+                return "Google Calendar connections are currently disabled."
             return "Google Calendar is not connected."
-        try:
-            events = self.events(user_id)
-        except (ApiError, RemoteError):
+        events = []
+        successful = False
+        for connection in connections:
+            try:
+                fetched = self._list_events(user_id, connection, *calendar_range(None, None))
+                successful = True
+                events.extend((connection, event) for event in fetched)
+            except (ApiError, RemoteError):
+                continue
+        if not successful:
             return "Google Calendar is connected but temporarily unavailable."
         if not events:
             return "No upcoming Google Calendar events in the next seven days."
@@ -166,16 +197,18 @@ class GoogleCalendar:
             return str(value).replace("\r", " ").replace("\n", " ")[:limit]
 
         lines = []
-        for event in events[:50]:
+        events.sort(key=lambda item: (item[1].get("start") or "9999", item[1].get("id") or ""))
+        for connection, event in events[:50]:
             title = clean(event.get("title") or "Untitled event", 200)
             start = clean(event.get("start") or "time unavailable", 80)
             end = f" to {clean(event['end'], 80)}" if event.get("end") else ""
             location = f" | {clean(event['location'], 200)}" if event.get("location") else ""
-            lines.append(f"- {title} | {start}{end}{location}")
+            source = clean(connection.get("displayName") or connection.get("calendarName") or "Google Calendar", 80)
+            lines.append(f"- [{source}] {title} | {start}{end}{location}")
         return "\n".join(lines)
 
-    def disconnect(self, user_id: str):
-        self.database.delete_calendar_connection(user_id)
+    def disconnect(self, user_id: str, connection_id: str | None = None):
+        self.database.delete_calendar_connection(user_id, connection_id)
 
     def _require_configured(self):
         if not self.configured():
@@ -192,10 +225,10 @@ class GoogleCalendar:
                                  headers={"Content-Type": "application/x-www-form-urlencoded"},
                                  body=urlencode(values).encode("utf-8"))
 
-    def _access_token(self, user_id: str, force_refresh: bool = False) -> str:
-        account = self.database.calendar_account(user_id)
+    def _access_token(self, user_id: str, connection_id: str, force_refresh: bool = False) -> str:
+        account = self.database.calendar_connection(user_id, connection_id)
         if not account:
-            raise ApiError(409, "Google Calendar is not connected.")
+            raise ApiError(409, "Google Calendar connection was not found.")
         expires_at = account.get("tokenExpiresAt")
         try:
             expires = parse_instant(expires_at) if expires_at else datetime.min.replace(tzinfo=timezone.utc)
@@ -221,12 +254,13 @@ class GoogleCalendar:
         if not access_token:
             raise ApiError(401, "Google Calendar authorization has expired. Please reconnect it.")
         refresh_token = self._token_text(token, "refresh_token") or account["refreshToken"]
-        self.database.update_calendar_tokens(user_id, access_token, refresh_token, self._token_expiration(token))
+        self.database.update_calendar_tokens(connection_id, access_token, refresh_token, self._token_expiration(token))
         return access_token
 
-    def _list_events(self, user_id: str, range_start: datetime, range_end: datetime) -> list[dict]:
+    def _list_events(self, user_id: str, connection: dict,
+                     range_start: datetime, range_end: datetime) -> list[dict]:
         try:
-            access_token = self._access_token(user_id)
+            access_token = self._access_token(user_id, connection["id"])
         except RemoteError:
             raise ApiError(503, "Google Calendar is temporarily unavailable.") from None
 
@@ -245,7 +279,12 @@ class GoogleCalendar:
                 items = payload.get("items", [])
                 if not isinstance(items, list):
                     raise ApiError(503, "Google Calendar is temporarily unavailable.")
-                events.extend(self._event(item) for item in items if isinstance(item, dict))
+                for item in items:
+                    if isinstance(item, dict):
+                        event = self._event(item)
+                        event["calendarId"] = connection["id"]
+                        event["calendarName"] = connection.get("displayName") or connection.get("calendarName") or "Google Calendar"
+                        events.append(event)
                 if len(events) >= 100:
                     return events[:100]
                 page_token = payload.get("nextPageToken")
@@ -261,7 +300,7 @@ class GoogleCalendar:
             if error.status != 401:
                 raise ApiError(503, "Google Calendar is temporarily unavailable.") from None
             try:
-                events = fetch(self._access_token(user_id, force_refresh=True))
+                events = fetch(self._access_token(user_id, connection["id"], force_refresh=True))
             except ApiError:
                 raise
             except RemoteError:

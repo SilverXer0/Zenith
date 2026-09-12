@@ -25,12 +25,23 @@ export type Memory = {
 
 export type CalendarEvent = {
   id: string;
+  calendarId?: string;
+  calendarName?: string;
   title: string;
   start: string;
   end: string;
   allDay: boolean;
   location: string | null;
   status: string;
+};
+
+export type CalendarConnection = {
+  id: string;
+  userId: string;
+  displayName: string;
+  calendarName: string | null;
+  enabled: boolean;
+  connectedAt: string;
 };
 
 export type CalendarStatus = {

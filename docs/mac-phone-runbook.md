@@ -77,7 +77,7 @@ Verify the must-have flows on the Mac and phone first:
 
 1. Setup/sign-in, task capture, editing, completion, reopening, and deletion.
 2. Live task updates in both directions and reconnect catch-up.
-3. Calendar connection and upcoming event display. Multiple independent calendar connections are planned as a follow-up slice.
+3. Calendar connection and upcoming event display. Connect a second Google account, rename it, pause/include it, and confirm events from enabled calendars appear together.
 4. Local Qwen chat, confirmation-gated task changes, and model unload.
 5. Planning, memory, PWA installation, reminders, and optional voice controls.
 

@@ -18,7 +18,7 @@ from .database import Database
 from .errors import ApiError
 from .events import TaskEvents, TaskEventResponse
 from .models import (AssistantActionsInput, AssistantChatInput, AssistantUnloadInput,
-                     Credentials, MemoryPatch, TaskPatch, VoiceSpeakInput)
+                     CalendarConnectionPatch, Credentials, MemoryPatch, TaskPatch, VoiceSpeakInput)
 from .planning import Planning, planning_date, weekly_start
 from .voice import LocalVoice, RECORDING_OPENAPI, WavResponse
 
@@ -160,6 +160,22 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.get("/api/calendar/status")
     def calendar_status(current_user: dict = Depends(user)):
         return google_calendar.status(current_user["id"])
+
+    @app.get("/api/calendar/connections")
+    def calendar_connections(current_user: dict = Depends(user)):
+        return {"connections": google_calendar.connections(current_user["id"])}
+
+    @app.patch("/api/calendar/connections/{connection_id}")
+    def update_calendar_connection(connection_id: str, patch: CalendarConnectionPatch,
+                                   current_user: dict = Depends(user)):
+        return {"connection": database.update_calendar_connection(
+            current_user["id"], connection_id,
+            display_name=patch.displayName, enabled=patch.enabled)}
+
+    @app.delete("/api/calendar/connections/{connection_id}", status_code=204)
+    def delete_calendar_connection(connection_id: str, current_user: dict = Depends(user)):
+        google_calendar.disconnect(current_user["id"], connection_id)
+        return Response(status_code=204)
 
     @app.get("/api/calendar/connect")
     def calendar_connect(current_user: dict = Depends(user)):

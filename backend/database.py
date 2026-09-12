@@ -36,6 +36,11 @@ SCHEMA = (
         user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         access_token TEXT, refresh_token TEXT NOT NULL, token_expires_at TEXT,
         calendar_name TEXT, connected_at TEXT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS calendar_connections (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        display_name TEXT NOT NULL DEFAULT 'Google Calendar', access_token TEXT,
+        refresh_token TEXT NOT NULL, token_expires_at TEXT, calendar_name TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1, connected_at TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS calendar_oauth_states (
         state TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         expires_at TEXT NOT NULL)""",
@@ -44,6 +49,7 @@ SCHEMA = (
     "CREATE INDEX IF NOT EXISTS task_completion_user_time ON task_completion_events(user_id, completed_at)",
     "CREATE INDEX IF NOT EXISTS memory_user_updated ON memory_items(user_id, updated_at)",
     "CREATE INDEX IF NOT EXISTS calendar_oauth_expiry ON calendar_oauth_states(expires_at)",
+    "CREATE INDEX IF NOT EXISTS calendar_connections_user ON calendar_connections(user_id, enabled, connected_at)",
 )
 
 
@@ -99,11 +105,29 @@ class Database:
                 if name not in calendar_columns:
                     connection.execute(f"ALTER TABLE calendar_accounts ADD COLUMN {name} TEXT")
             connection.execute("UPDATE calendar_accounts SET connected_at=? WHERE connected_at IS NULL", (timestamp(),))
+            self._migrate_calendar_accounts(connection)
             user = connection.execute("SELECT id FROM users ORDER BY created_at LIMIT 1").fetchone()
             user_id = user["id"] if user else str(uuid4())
             if not user:
                 connection.execute("INSERT INTO users (id, display_name, created_at) VALUES (?, ?, ?)", (user_id, "Local user", timestamp()))
             self._migrate_legacy(connection, user_id)
+
+    def _migrate_calendar_accounts(self, connection):
+        rows = connection.execute("""SELECT user_id, access_token, refresh_token,
+            token_expires_at, calendar_name, connected_at FROM calendar_accounts""").fetchall()
+        for row in rows:
+            if not row["refresh_token"]:
+                continue
+            existing = connection.execute("""SELECT 1 FROM calendar_connections
+                WHERE user_id=? AND refresh_token=? LIMIT 1""", (row["user_id"], row["refresh_token"])).fetchone()
+            if existing:
+                continue
+            calendar_name = row["calendar_name"] or "Google Calendar"
+            connection.execute("""INSERT INTO calendar_connections
+                (id,user_id,display_name,access_token,refresh_token,token_expires_at,calendar_name,enabled,connected_at)
+                VALUES (?,?,?,?,?,?,?,?,?)""", (
+                str(uuid4()), row["user_id"], calendar_name, row["access_token"], row["refresh_token"],
+                row["token_expires_at"], calendar_name, 1, row["connected_at"] or timestamp()))
 
     def _migrate_legacy(self, connection, user_id):
         legacy = self.data_dir / "tasks.json"
@@ -250,15 +274,45 @@ class Database:
                 raise ApiError(404, "Context note not found.")
 
     def calendar_connected(self, user_id: str) -> bool:
-        return self.calendar_account(user_id) is not None
+        with self.connection() as connection:
+            return bool(connection.execute("SELECT 1 FROM calendar_connections WHERE user_id=? LIMIT 1", (user_id,)).fetchone())
+
+    def list_calendar_connections(self, user_id: str, *, enabled_only: bool = False,
+                                  include_secrets: bool = False) -> list[dict]:
+        with self.connection() as connection:
+            query = """SELECT id, user_id AS userId, display_name AS displayName,
+                access_token AS accessToken, refresh_token AS refreshToken,
+                token_expires_at AS tokenExpiresAt, calendar_name AS calendarName,
+                enabled, connected_at AS connectedAt FROM calendar_connections
+                WHERE user_id=?"""
+            values: list = [user_id]
+            if enabled_only:
+                query += " AND enabled=1"
+            query += " ORDER BY connected_at, id"
+            rows = [dict(row) for row in connection.execute(query, values)]
+            if not include_secrets:
+                for row in rows:
+                    row.pop("accessToken", None)
+                    row.pop("refreshToken", None)
+                    row.pop("tokenExpiresAt", None)
+            return rows
+
+    def calendar_connection(self, user_id: str, connection_id: str) -> dict | None:
+        with self.connection() as connection:
+            row = connection.execute("""SELECT id, user_id AS userId, display_name AS displayName,
+                access_token AS accessToken, refresh_token AS refreshToken,
+                token_expires_at AS tokenExpiresAt, calendar_name AS calendarName,
+                enabled, connected_at AS connectedAt FROM calendar_connections
+                WHERE id=? AND user_id=?""", (connection_id, user_id)).fetchone()
+            return dict(row) if row else None
 
     def calendar_account(self, user_id: str) -> dict | None:
-        with self.connection() as connection:
-            row = connection.execute("""SELECT user_id AS userId, access_token AS accessToken,
-                refresh_token AS refreshToken, token_expires_at AS tokenExpiresAt,
-                calendar_name AS calendarName, connected_at AS connectedAt
-                FROM calendar_accounts WHERE user_id=?""", (user_id,)).fetchone()
-            return dict(row) if row else None
+        accounts = self.list_calendar_connections(user_id, include_secrets=True)
+        if not accounts:
+            return None
+        account = next((item for item in accounts if item["enabled"]), accounts[0])
+        return {key: account[key] for key in (
+            "userId", "accessToken", "refreshToken", "tokenExpiresAt", "calendarName", "connectedAt")}
 
     def save_calendar_state(self, user_id: str, state: str, expires_at: str):
         with self.connection(write=True) as connection:
@@ -276,25 +330,82 @@ class Database:
             connection.execute("DELETE FROM calendar_oauth_states WHERE state=?", (state,))
             return row["user_id"]
 
-    def save_calendar_account(self, user_id: str, access_token: str, refresh_token: str,
-                              expires_at: str, calendar_name: str, connected_at: str):
+    def save_calendar_connection(self, user_id: str, access_token: str, refresh_token: str,
+                                 expires_at: str, calendar_name: str, connected_at: str,
+                                 display_name: str | None = None, connection_id: str | None = None) -> str:
         with self.connection(write=True) as connection:
-            connection.execute("""INSERT INTO calendar_accounts
-                (user_id,access_token,refresh_token,token_expires_at,calendar_name,connected_at)
-                VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+            connection_id = connection_id or str(uuid4())
+            display_name = (display_name or calendar_name or "Google Calendar").strip()[:80] or "Google Calendar"
+            connection.execute("""INSERT INTO calendar_connections
+                (id,user_id,display_name,access_token,refresh_token,token_expires_at,calendar_name,enabled,connected_at)
+                VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
                 access_token=excluded.access_token, refresh_token=excluded.refresh_token,
                 token_expires_at=excluded.token_expires_at, calendar_name=excluded.calendar_name,
                 connected_at=excluded.connected_at""",
-                (user_id, access_token, refresh_token, expires_at, calendar_name, connected_at))
+                (connection_id, user_id, display_name, access_token, refresh_token, expires_at,
+                 calendar_name or "Google Calendar", 1, connected_at))
+            self._sync_legacy_calendar_account(connection, user_id)
+            return connection_id
 
-    def update_calendar_tokens(self, user_id: str, access_token: str, refresh_token: str, expires_at: str):
+    def save_calendar_account(self, user_id: str, access_token: str, refresh_token: str,
+                              expires_at: str, calendar_name: str, connected_at: str):
+        accounts = self.list_calendar_connections(user_id, include_secrets=True)
+        existing = next((item for item in accounts if item["enabled"]), accounts[0] if accounts else None)
+        return self.save_calendar_connection(user_id, access_token, refresh_token, expires_at,
+                                             calendar_name, connected_at,
+                                             display_name=(existing or {}).get("displayName"),
+                                             connection_id=(existing or {}).get("id"))
+
+    def update_calendar_tokens(self, connection_id: str, access_token: str, refresh_token: str, expires_at: str):
         with self.connection(write=True) as connection:
-            result = connection.execute("""UPDATE calendar_accounts SET access_token=?, refresh_token=?,
-                token_expires_at=? WHERE user_id=?""", (access_token, refresh_token, expires_at, user_id))
+            result = connection.execute("""UPDATE calendar_connections SET access_token=?, refresh_token=?,
+                token_expires_at=? WHERE id=?""", (access_token, refresh_token, expires_at, connection_id))
             if not result.rowcount:
-                raise ApiError(409, "Google Calendar is not connected.")
+                raise ApiError(409, "Google Calendar connection was not found.")
+            user = connection.execute("SELECT user_id FROM calendar_connections WHERE id=?", (connection_id,)).fetchone()
+            if user:
+                self._sync_legacy_calendar_account(connection, user["user_id"])
 
-    def delete_calendar_connection(self, user_id: str):
+    def update_calendar_connection(self, user_id: str, connection_id: str, *, display_name: str | None = None,
+                                   enabled: bool | None = None) -> dict:
         with self.connection(write=True) as connection:
+            row = connection.execute("SELECT * FROM calendar_connections WHERE id=? AND user_id=?",
+                                     (connection_id, user_id)).fetchone()
+            if not row:
+                raise ApiError(404, "Calendar connection not found.")
+            next_name = (display_name.strip()[:80] if display_name is not None else row["display_name"]) or "Google Calendar"
+            next_enabled = int(enabled) if enabled is not None else row["enabled"]
+            connection.execute("""UPDATE calendar_connections SET display_name=?, enabled=?
+                WHERE id=? AND user_id=?""", (next_name, next_enabled, connection_id, user_id))
+            self._sync_legacy_calendar_account(connection, user_id)
+            updated = connection.execute("""SELECT id, user_id AS userId, display_name AS displayName,
+                calendar_name AS calendarName, enabled, connected_at AS connectedAt
+                FROM calendar_connections WHERE id=? AND user_id=?""", (connection_id, user_id)).fetchone()
+            return dict(updated)
+
+    def delete_calendar_connection(self, user_id: str, connection_id: str | None = None):
+        with self.connection(write=True) as connection:
+            if connection_id:
+                result = connection.execute("DELETE FROM calendar_connections WHERE id=? AND user_id=?",
+                                            (connection_id, user_id))
+                if not result.rowcount:
+                    raise ApiError(404, "Calendar connection not found.")
+            else:
+                connection.execute("DELETE FROM calendar_connections WHERE user_id=?", (user_id,))
             connection.execute("DELETE FROM calendar_accounts WHERE user_id=?", (user_id,))
+            self._sync_legacy_calendar_account(connection, user_id)
             connection.execute("DELETE FROM calendar_oauth_states WHERE user_id=?", (user_id,))
+
+    @staticmethod
+    def _sync_legacy_calendar_account(connection, user_id: str):
+        row = connection.execute("""SELECT user_id, access_token, refresh_token,
+            token_expires_at, calendar_name, connected_at FROM calendar_connections
+            WHERE user_id=? ORDER BY connected_at, id LIMIT 1""", (user_id,)).fetchone()
+        if not row:
+            return
+        connection.execute("""INSERT INTO calendar_accounts
+            (user_id,access_token,refresh_token,token_expires_at,calendar_name,connected_at)
+            VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+            access_token=excluded.access_token, refresh_token=excluded.refresh_token,
+            token_expires_at=excluded.token_expires_at, calendar_name=excluded.calendar_name,
+            connected_at=excluded.connected_at""", tuple(row))

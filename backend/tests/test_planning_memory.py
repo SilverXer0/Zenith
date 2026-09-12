@@ -205,9 +205,8 @@ class PlanningMemoryTests(unittest.TestCase):
         self.assertEqual(node["weekly"], weekly)
 
     def test_connected_calendar_is_unavailable_when_server_is_unconfigured(self):
-        with self.database.connection(write=True) as connection:
-            connection.execute("INSERT INTO calendar_accounts VALUES (?,NULL,?,?,?,?)",
-                               (self.user_id, "preserved-refresh-token", "2099-01-01T00:00:00.000Z", "Personal", timestamp()))
+        self.database.save_calendar_account(self.user_id, None, "preserved-refresh-token",
+                                            "2099-01-01T00:00:00.000Z", "Personal", timestamp())
         for path in ("/api/briefing/morning?date=2026-09-04", "/api/weekly-plan?start=2026-09-04"):
             self.assertEqual(self.client.get(path).json()["calendar"], {"connected": True, "available": False, "events": []})
 

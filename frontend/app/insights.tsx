@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   api,
   type Briefing,
+  type CalendarConnection,
   type CalendarEvent,
   type CalendarStatus,
   type DailySummary,
@@ -41,7 +42,7 @@ function TaskLine({ task }: { task: Task }) {
 
 function CalendarList({ events }: { events: CalendarEvent[] }) {
   if (!events.length) return <p className="muted text-sm">No upcoming events in this window.</p>;
-  return <ul className="space-y-2">{events.slice(0, 6).map((event) => <li className="border-t border-[var(--line)] pt-2 first:border-t-0 first:pt-0" key={event.id}><p className="font-semibold">{event.title}</p><p className="muted text-xs">{eventTime(event)}{event.location ? " · " + event.location : ""}</p></li>)}</ul>;
+  return <ul className="space-y-2">{events.slice(0, 6).map((event) => <li className="border-t border-[var(--line)] pt-2 first:border-t-0 first:pt-0" key={(event.calendarId || "calendar") + ":" + event.id}><p className="font-semibold">{event.title}</p><p className="muted text-xs">{eventTime(event)}{event.calendarName ? " · " + event.calendarName : ""}{event.location ? " · " + event.location : ""}</p></li>)}</ul>;
 }
 
 function PlanningPanels({ taskRevision }: InsightsProps) {
@@ -50,6 +51,7 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
   const [week, setWeek] = useState<WeeklyPlan | null>(null);
   const [summary, setSummary] = useState<DailySummary | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(null);
+  const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState("");
   const [calendarBusy, setCalendarBusy] = useState(false);
@@ -60,18 +62,20 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
     setLoading(true);
     setRefreshError("");
     try {
-      const [nextBriefing, nextMorning, nextWeek, nextSummary, nextCalendar] = await Promise.all([
+      const [nextBriefing, nextMorning, nextWeek, nextSummary, nextCalendar, nextConnections] = await Promise.all([
         api<Briefing>("/api/briefing?date=" + today),
         api<MorningBriefing>("/api/briefing/morning?date=" + today),
         api<WeeklyPlan>("/api/weekly-plan?start=" + today),
         api<DailySummary>("/api/summaries/daily?date=" + today + "&offset=" + new Date().getTimezoneOffset()),
         api<CalendarStatus>("/api/calendar/status"),
+        api<{ connections: CalendarConnection[] }>("/api/calendar/connections"),
       ]);
       setBriefing(nextBriefing);
       setMorning(nextMorning);
       setWeek(nextWeek);
       setSummary(nextSummary);
       setCalendarStatus(nextCalendar);
+      setCalendarConnections(nextConnections.connections);
     } catch (caught) {
       setRefreshError(caught instanceof Error ? caught.message : "Planning could not be loaded.");
     } finally {
@@ -84,11 +88,27 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
     return () => window.clearTimeout(initialLoad);
   }, [refresh]);
 
-  async function disconnectCalendar() {
+  async function updateCalendarConnection(connection: CalendarConnection, patch: { displayName?: string; enabled?: boolean }) {
     setCalendarBusy(true);
     try {
-      await api("/api/calendar/connection", { method: "DELETE" });
-      setCalendarStatus((current) => current ? { ...current, connected: false, calendarName: null, connectedAt: null } : current);
+      await api("/api/calendar/connections/" + connection.id, { method: "PATCH", json: patch });
+      await refresh();
+    } catch (caught) {
+      setRefreshError(caught instanceof Error ? caught.message : "Calendar connection could not be updated.");
+    } finally { setCalendarBusy(false); }
+  }
+
+  async function renameCalendar(connection: CalendarConnection) {
+    const name = window.prompt("Name this calendar connection", connection.displayName);
+    if (name === null || !name.trim()) return;
+    await updateCalendarConnection(connection, { displayName: name.trim() });
+  }
+
+  async function disconnectCalendar(connection: CalendarConnection) {
+    if (!window.confirm("Disconnect " + connection.displayName + "?")) return;
+    setCalendarBusy(true);
+    try {
+      await api("/api/calendar/connections/" + connection.id, { method: "DELETE" });
       await refresh();
     } catch (caught) {
       setRefreshError(caught instanceof Error ? caught.message : "Calendar could not be disconnected.");
@@ -104,7 +124,7 @@ function PlanningPanels({ taskRevision }: InsightsProps) {
 
     <section className="surface p-5 sm:p-7" aria-labelledby="calendar-title">
       <p className="eyebrow">YOUR SCHEDULE</p><h2 id="calendar-title" className="mt-2 text-2xl font-semibold">Calendar</h2>
-      {!calendarStatus ? <p className="muted mt-4 text-sm">Checking Calendar…</p> : !calendarStatus.configured ? <p className="muted mt-4 text-sm">Google Calendar is not configured on this home server yet. Your task planning remains available.</p> : !calendarStatus.connected ? <><p className="muted mt-4 text-sm">Connect a read-only Google Calendar to see your schedule beside your tasks.</p><a className="primary-button mt-4 inline-block" href="/api/calendar/connect">Connect Calendar</a></> : <><p className="muted mt-2 text-sm">{calendarStatus.calendarName || "Google Calendar"}</p><div className="mt-4">{morning?.calendar.available ? <CalendarList events={morning.calendar.events} /> : <p className="muted text-sm">Calendar is connected but temporarily unavailable.</p>}</div><button className="quiet-button mt-5" onClick={() => void disconnectCalendar()} disabled={calendarBusy}>{calendarBusy ? "Disconnecting…" : "Disconnect"}</button></>}
+      {!calendarStatus ? <p className="muted mt-4 text-sm">Checking Calendar…</p> : !calendarStatus.configured ? <p className="muted mt-4 text-sm">Google Calendar is not configured on this home server yet. Your task planning remains available.</p> : <><p className="muted mt-2 text-sm">{calendarConnections.length ? "Choose which calendars Zenith should include." : "Connect a read-only Google Calendar to see your schedule beside your tasks."}</p>{calendarConnections.length > 0 && <ul className="mt-4 space-y-3">{calendarConnections.map((connection) => <li className="rounded-xl border border-[var(--line)] bg-white/45 p-3" key={connection.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-semibold">{connection.displayName}</p><p className="muted truncate text-xs">{connection.calendarName || "Google Calendar"}{!connection.enabled && " · paused"}</p></div><span className="muted text-xs">{connection.enabled ? "Included" : "Paused"}</span></div><div className="mt-3 flex flex-wrap gap-2"><button className="quiet-button" onClick={() => void updateCalendarConnection(connection, { enabled: !connection.enabled })} disabled={calendarBusy}>{connection.enabled ? "Pause" : "Include"}</button><button className="quiet-button" onClick={() => void renameCalendar(connection)} disabled={calendarBusy}>Rename</button><button className="danger-button" onClick={() => void disconnectCalendar(connection)} disabled={calendarBusy}>Disconnect</button></div></li>)}</ul>}<div className="mt-4 flex flex-wrap gap-2"><a className="primary-button inline-block" href="/api/calendar/connect">{calendarConnections.length ? "Connect another calendar" : "Connect Calendar"}</a>{calendarConnections.length > 0 && <span className="muted self-center text-xs">Events from included calendars appear together below.</span>}</div>{calendarConnections.length > 0 && <div className="mt-5">{morning?.calendar.available ? <CalendarList events={morning.calendar.events} /> : <p className="muted text-sm">Included calendars are temporarily unavailable.</p>}</div>}</>}
     </section>
 
     <section className="surface p-5 sm:p-7" aria-labelledby="week-title">

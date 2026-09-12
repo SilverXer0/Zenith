@@ -54,6 +54,17 @@ class MemoryPatch(BaseModel):
         return value.strip() if value is not None else None
 
 
+class CalendarConnectionPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    displayName: str | None = Field(default=None, max_length=80)
+    enabled: StrictBool | None = None
+
+    @field_validator("displayName")
+    @classmethod
+    def trim_display_name(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
 class AssistantHistoryItem(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     role: Literal["user", "assistant"]
