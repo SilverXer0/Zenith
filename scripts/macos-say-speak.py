@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import wave
 from pathlib import Path
 
 
@@ -26,7 +27,12 @@ def main() -> int:
             stderr=subprocess.DEVNULL,
             check=True,
         )
+        with wave.open(str(output), "rb") as audio:
+            if audio.getnframes() <= 0:
+                return 1
     except (OSError, subprocess.SubprocessError):
+        return 1
+    except (EOFError, wave.Error):
         return 1
     finally:
         try:
