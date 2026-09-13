@@ -4,6 +4,7 @@ node_modules/
 .next/
 *.tsbuildinfo
 .venv/
+backend/.venv-voice/
 __pycache__/
 *.pyc
 .pytest_cache/
