@@ -79,6 +79,54 @@ if [[ "$data_dir" != /* ]]; then
 fi
 mkdir -p "$data_dir"
 
+api_pid=""
+frontend_pid=""
+ollama_pid=""
+ollama_started=false
+lock_dir="$data_dir/.zenith-launcher.lock"
+if [[ -d "$lock_dir" ]]; then
+  lock_pid="$(<"$lock_dir/pid" 2>/dev/null || true)"
+  lock_command=""
+  if [[ "$lock_pid" == <-> ]]; then
+    lock_command="$(ps -o command= -p "$lock_pid" 2>/dev/null || true)"
+  fi
+  if [[ "$lock_command" == *start-zenith-mac.sh* ]]; then
+    print -u2 "Zenith is already running (launcher PID $lock_pid). Stop that launcher before starting another one."
+    exit 1
+  fi
+  rm -f "$lock_dir/pid"
+  rmdir "$lock_dir" 2>/dev/null || true
+fi
+if ! mkdir "$lock_dir" 2>/dev/null; then
+  print -u2 "Zenith could not acquire its launcher lock. Stop any existing Zenith launcher and try again."
+  exit 1
+fi
+print -r -- "$$" >"$lock_dir/pid"
+
+stop_process_tree() {
+  local process_id="$1"
+  local child_ids=""
+  [[ -z "$process_id" ]] && return
+  child_ids="$(pgrep -P "$process_id" 2>/dev/null || true)"
+  for child_id in ${(f)child_ids}; do
+    stop_process_tree "$child_id"
+  done
+  kill "$process_id" 2>/dev/null || true
+}
+
+cleanup() {
+  stop_process_tree "$frontend_pid"
+  stop_process_tree "$api_pid"
+  if [[ "$ollama_started" == true ]]; then
+    stop_process_tree "$ollama_pid"
+  fi
+  if [[ -f "$lock_dir/pid" ]] && [[ "$(<"$lock_dir/pid")" == "$$" ]]; then
+    rm -f "$lock_dir/pid"
+    rmdir "$lock_dir" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
 local_only=false
 if [[ "${1:-}" == "--local-only" ]]; then
   local_only=true
@@ -105,8 +153,6 @@ if [[ -z "${ZENITH_STT_COMMAND:-}" && -x "$voice_python" ]] \
   export ZENITH_STT_ARGS='["scripts/mlx-whisper-transcribe.py","{input}"]'
 fi
 
-ollama_pid=""
-ollama_started=false
 ollama_path="$(command -v ollama || true)"
 if [[ -z "$ollama_path" && -x "/Applications/Ollama.app/Contents/Resources/ollama" ]]; then
   ollama_path="/Applications/Ollama.app/Contents/Resources/ollama"
@@ -203,16 +249,6 @@ print "Starting the Python API..."
   >"$api_log" 2>"$api_error_log" &
 api_pid=$!
 
-cleanup() {
-  if kill -0 "$api_pid" 2>/dev/null; then
-    kill "$api_pid" 2>/dev/null || true
-  fi
-  if [[ "$ollama_started" == true && -n "$ollama_pid" ]] && kill -0 "$ollama_pid" 2>/dev/null; then
-    kill "$ollama_pid" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT INT TERM
-
 ready=false
 for attempt in {1..60}; do
   if curl --silent --fail --max-time 2 "http://127.0.0.1:$api_port/api/health" >/dev/null; then
@@ -234,4 +270,10 @@ fi
 print "Building the current Next frontend..."
 "$npm_path" --prefix "$frontend" run build:webpack
 print "Starting the Next frontend. Keep this window open while Zenith is running."
-"$npm_path" --prefix "$frontend" run start -- --hostname 127.0.0.1 --port "$frontend_port"
+"$npm_path" --prefix "$frontend" run start -- --hostname 127.0.0.1 --port "$frontend_port" &
+frontend_pid=$!
+set +e
+wait "$frontend_pid"
+frontend_exit=$?
+set -e
+exit "$frontend_exit"

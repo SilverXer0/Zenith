@@ -15,7 +15,7 @@ if [[ "${1:-}" == "--remove" && $# -eq 1 ]]; then
   exit 0
 fi
 
-if [[ $# -gt 0 || ! -x "$root/scripts/start-zenith-mac.sh" ]]; then
+if [[ $# -gt 0 || ! -f "$root/scripts/start-zenith-mac.sh" ]]; then
   print -u2 "Usage: zsh ./scripts/install-zenith-mac-agent.sh [--remove]"
   exit 1
 fi
