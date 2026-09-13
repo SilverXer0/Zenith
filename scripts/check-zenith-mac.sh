@@ -155,7 +155,19 @@ else
 fi
 
 if [[ -x "/usr/bin/say" && -x "/usr/bin/afconvert" ]]; then
-  pass_check "Native Mac speech output is available"
+  speech_probe="$(mktemp -d "${TMPDIR:-/tmp}/zenith-speech-check.XXXXXX" 2>/dev/null || true)"
+  speech_output="$speech_probe/speech.wav"
+  if [[ -n "$speech_probe" && -x "$python" ]] \
+     && "$python" "$root/scripts/macos-say-speak.py" "Zenith speech readiness check" "$speech_output" >/dev/null 2>&1 \
+     && [[ -s "$speech_output" ]]; then
+    pass_check "Native Mac speech output is available"
+  else
+    warn_check "Native Mac speech tools are installed but could not produce audio in this session."
+  fi
+  if [[ -n "$speech_probe" ]]; then
+    rm -f "$speech_output"
+    rmdir "$speech_probe" 2>/dev/null || true
+  fi
 else
   warn_check "Native Mac speech output tools are unavailable."
 fi
